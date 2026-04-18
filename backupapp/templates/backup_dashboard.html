@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instalacja Backup</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f7f6; padding: 20px; color: #333; }
+        .container { max-width: 650px; margin: 0 auto; }
+        .card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin-bottom: 30px; }
+        .step { margin-bottom: 20px; padding: 15px; border-left: 4px solid #1a73e8; background: #f8faff; border-radius: 0 8px 8px 0; }
+        .step h3 { margin: 0 0 10px 0; font-size: 0.9em; color: #1a73e8; text-transform: uppercase; }
+        code { display: block; background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.8em; word-break: break-all; margin-bottom: 10px; }
+        .btn { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; width: 100%; }
+        .btn:hover { background: #1557b0; }
+        .btn.success { background: #059669; }
+        .closed { text-align: center; padding: 50px; background: white; border-radius: 15px; border: 2px dashed #ccc; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    {% if is_closed %}
+        <div class="closed">
+            <h1>🔒 Panel oczekuje</h1>
+            <p>Odznacz "is_used" w Adminie, aby rozpocząć nową instalację.</p>
+        </div>
+    {% else %}
+        {% for item in invitations %}
+            <div class="card">
+                <h1 style="margin-top:0;">📱 Instalacja: {{ item.user }}</h1>
+                <p style="color: #666;">Wykonaj poniższe kroki po kolei w Termux:</p>
+
+                <div class="step">
+                    <h3>Krok 1: Pakiety systemowe</h3>
+                    <code id="p-{{ forloop.counter }}">{{ item.cmd_packages }}</code>
+                    <button class="btn" onclick="copy('p-{{ forloop.counter }}', this)">📋 KOPIUJ KROK 1</button>
+                </div>
+
+                <div class="step">
+                    <h3>Krok 2: Konfiguracja kluczy</h3>
+                    <code id="k-{{ forloop.counter }}">{{ item.cmd_keys }}</code>
+                    <button class="btn" onclick="copy('k-{{ forloop.counter }}', this)">📋 KOPIUJ KROK 2</button>
+                </div>
+                
+                <div class="step" style="border-left-color: #059669; background: #f0fff4;">
+                    <h3>Krok 3: Autoryzacja i Skrypt</h3>
+                    <code id="s-{{ forloop.counter }}">{{ item.cmd_final }}</code>
+                    <button class="btn" style="background: #059669;" onclick="copy('s-{{ forloop.counter }}', this)">🚀 FINALIZUJ I KOPIUJ</button>
+                </div>
+                
+                <div class="step" style="border-left-color: #6366f1; background: #f5f3ff;">
+                  <h3>Krok 4: Automatyczny Backup (Opcjonalnie)</h3>
+                  <p style="font-size: 0.8em; color: #4338ca; margin-bottom: 5px;">
+                      Zautomatyzuj proces, aby backup robił się sam raz na dobę podczas ładowania.
+                  </p>
+                  <code id="s-job-{{ forloop.counter }}">{{ item.cmd_scheduler }}</code>
+                  <button class="btn" style="background: #6366f1;" onclick="copy('s-job-{{ forloop.counter }}', this)">⏰ USTAW HARMONOGRAM</button>
+                </div>
+
+            </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+    function copy(id, btn) {
+        const text = document.getElementById(id).innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            const oldText = btn.innerText;
+            btn.innerText = "✅ SKOPIOWANO!";
+            btn.classList.add('success');
+            setTimeout(() => {
+                btn.innerText = oldText;
+                btn.classList.remove('success');
+            }, 1500);
+        });
+    }
+</script>
+
+</body>
+</html>

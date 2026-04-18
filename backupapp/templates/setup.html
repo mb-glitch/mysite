@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Konfiguracja Backup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; background: #f4f4f4; }
+        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        code { background: #272822; color: #f8f8f2; padding: 15px; display: block; overflow-x: auto; border-radius: 5px; margin: 15px 0; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Cześć {{ user.username }}!</h2>
+        <p>Aby połączyć Twój telefon z serwerem backupu:</p>
+        <ol>
+            <li>Otwórz aplikację <b>Termux</b>.</li>
+            <li>Skopiuj i wklej poniższą komendę:</li>
+        </ol>
+        <code>{{ command }}</code>
+        <p><i>Po wykonaniu komendy ten link wygaśnie.</i></p>
+    </div>
+</body>
+</html>

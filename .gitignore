@@ -1,0 +1,28 @@
+# 1. Środowiska wirtualne
+venv/
+
+# 2. Pliki binarne i pamięć podręczna Pythona
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# 3. Zmienne środowiskowe (dane wrażliwe, hasła, klucze API)
+.env*
+
+# 4. Twoje logi (o których rozmawialiśmy)
+logs/
+*.log
+
+# 5. Pliki systemowe
+.DS_Store
+Thumbs.db
+
+# 6. Django - specyficzne
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+
+
