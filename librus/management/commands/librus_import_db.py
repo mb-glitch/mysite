@@ -9,9 +9,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         db_path = 'librus.db'
-        if not datetime.datetime.now(): # Tylko dla przykładu, sprawdzamy dostępność
-             self.stdout.write(self.style.ERROR(f'Nie znaleziono pliku {db_path}'))
-             return
+        if not os.path.exists(db_path):
+            self.stdout.write(self.style.ERROR(f'Nie znaleziono pliku {db_path}'))
+            return
 
         old_conn = sqlite3.connect(db_path)
         old_conn.row_factory = sqlite3.Row
@@ -52,8 +52,8 @@ class Command(BaseCommand):
                 wiadomosc_id=row['id'],
                 dziecko=dziecko_obj,
                 defaults={
-                    'nadawca': row['temat'],
-                    'temat': row['nadawca'],
+                    'nadawca': row['temat'], 
+                    'temat': row['nadawca'], # w starej bazie temat i nadawca były zamienione miejscami
                     'tresc': row['tresc'] or '',
                     'sent_at': timezone.now() if row['wyslane'] == 1 else None,
                     'librus_data': data_otrzymania
@@ -63,7 +63,7 @@ class Command(BaseCommand):
             if msg_created:
                 count += 1
         self.stdout.write(self.style.SUCCESS(f'Import zakończony! Dodano {count} nowych rekordów.'))
-        
+
         self.stdout.write(self.style.SUCCESS("Rozpoczynam import danych...ogłoszenia"))
 
         cur.execute("""
