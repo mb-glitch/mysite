@@ -204,7 +204,7 @@ class Command(BaseCommand):
                         wiadomosc_id=w["id"],
                         dziecko=dziecko_obj,
                         librus_data=data_obj, # Tu pamiętaj o poprawnym formacie daty!
-                        nadawca=w["nadawca"],
+                        nadawca = w["nadawca"].split(" (", 1)[0],
                         temat=w["temat"],
                         tresc=tresc
                     )

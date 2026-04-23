@@ -13,6 +13,9 @@ class Dziecko(models.Model):
         
     def __str__(self):
         return self.user.get_full_name()
+    
+    def nazwa_usera(self):
+        return self.user.username
             
 
 class Wiadomosc(models.Model):
@@ -44,7 +47,7 @@ class Wiadomosc(models.Model):
             f"Data: {self.librus_data}\n\n"
             f"{self.tresc}"
         )
-        subject = f"[{self.dziecko}] Nowa wiadomość: {self.temat}"
+        subject = f"[{self.dziecko.user.username}] Nowa wiadomość: {self.temat} od: {self.nadawca}"
 
         try:
             # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
@@ -94,7 +97,7 @@ class Ogloszenie(models.Model):
             f"Tytuł: {self.tytul}\n\n"
             f"{self.tresc}"
         )
-        subject = f"[{self.dziecko}] Nowe ogłoszenie: {self.tytul} od: {self.nadawca}"
+        subject = f"[{self.dziecko.user.username}] Nowe ogłoszenie: {self.tytul} od: {self.nadawca}"
 
         try:
             # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
@@ -110,7 +113,7 @@ class Ogloszenie(models.Model):
                 self.wyslane = True
                 self.sent_at = timezone.now()
                 self.save()
-                logging.info(f"Wysłano: {self.temat} ({self.dziecko})")
+                logging.info(f"Wysłano: {self.tytul} ({self.dziecko})")
                 return True
         except Exception as e:
             logging.error(f"Błąd wysyłki e-maila: {e}")
