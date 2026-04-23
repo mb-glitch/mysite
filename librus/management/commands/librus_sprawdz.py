@@ -192,7 +192,7 @@ class Command(BaseCommand):
 
     def aktualizuj_ogloszenia(librus_api, dziecko_obj):
         dziecko_obj = dziecko_obj
-        for o in librus.sprawdz_ogloszenia():
+        for o in librus_api.sprawdz_ogloszenia():
             juz_jest = Ogloszenie.objects.filter(
                 ogloszenie_id=o["id"], 
                 dziecko=dziecko_obj
