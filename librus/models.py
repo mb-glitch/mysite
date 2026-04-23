@@ -1,7 +1,7 @@
 from django.db import models
 from django.core.mail import send_mail
 from django.utils import timezone
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 import logging
 
 class Dziecko(models.Model):
@@ -33,7 +33,9 @@ class Wiadomosc(models.Model):
         verbose_name_plural = "Wiadomości"
 
     def wyslij_powiadomienie(self):
-        return
+        group = Group.objects.get(name="Librus")
+        recipient_list = group.user_set.values_list('email', flat=True)
+        recipient_list = list(recipient_list)
         """Przygotowuje treść i wysyła e-mail."""
         pelna_tresc = (
             f"LIBRUS WIADOMOŚĆ ({self.dziecko})\n"
@@ -43,7 +45,6 @@ class Wiadomosc(models.Model):
             f"{self.tresc}"
         )
         subject = f"[{self.dziecko}] Nowa wiadomość: {self.temat}"
-        recipient_list = ['adres@odbiorcy.pl'] # Możesz to trzymać w modelu Dziecko
 
         try:
             # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
@@ -82,4 +83,35 @@ class Ogloszenie(models.Model):
         verbose_name_plural = "Ogłoszenia"
         
     def wyslij_powiadomienie(self):
-        return
+        group = Group.objects.get(name="Librus")
+        recipient_list = group.user_set.values_list('email', flat=True)
+        recipient_list = list(recipient_list)
+        """Przygotowuje treść i wysyła e-mail."""
+        pelna_tresc = (
+            f"LIBRUS OGŁOSZENIE ({self.dziecko})\n"
+            f"Autor ogłoszenia: {self.nadawca}\n"
+            f"Data: {self.librus_data}\n"
+            f"Tytuł: {self.tytul}\n\n"
+            f"{self.tresc}"
+        )
+        subject = f"[{self.dziecko}] Nowe ogłoszenie: {self.tytul} od: {self.nadawca}"
+
+        try:
+            # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
+            success = send_mail(
+                subject,
+                pelna_tresc,
+                None, # Użyje DEFAULT_FROM_EMAIL z ustawień
+                recipient_list,
+                fail_silently=False,
+            )
+            
+            if success:
+                self.wyslane = True
+                self.sent_at = timezone.now()
+                self.save()
+                logging.info(f"Wysłano: {self.temat} ({self.dziecko})")
+                return True
+        except Exception as e:
+            logging.error(f"Błąd wysyłki e-maila: {e}")
+            return False
