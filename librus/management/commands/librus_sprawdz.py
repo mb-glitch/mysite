@@ -9,6 +9,7 @@ from django.utils import timezone
 from librus.models import Dziecko, Wiadomosc, Ogloszenie
 from dotenv import load_dotenv
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Pobiera ścieżkę do folderu, w którym znajduje się ten konkretny plik .py
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -20,6 +21,18 @@ logger = logging.getLogger('librus') # musi być zgodne z nazwą w settings.py
 # ========================
 #  Librus
 # ========================
+
+def parse_librus_date(value):
+    if not value:
+        return None
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            dt = datetime.datetime.strptime(value, fmt)
+            return timezone.make_aware(dt)
+        except Exception:
+            continue
+    return None
 
 class Librus:
     def __init__(self, user, user_pass, dziecko):
@@ -36,7 +49,7 @@ class Librus:
         self.do_login()
 
     def do_login(self):
-        logging.info("Logowanie: %s", self.login)
+        logger.info("Logowanie: %s", self.login)
 
         # 1. START FLOW (WAŻNE)
         r1 = self.session.get(
@@ -64,11 +77,11 @@ class Librus:
         try:
             data = r2.json()
         except Exception:
-            logging.error("Brak JSON — login failed")
+            logger.error("Brak JSON — login failed")
             raise
 
         if "goTo" not in data:
-            logging.error("Brak goTo — login failed")
+            logger.error("Brak goTo — login failed")
             raise Exception("Login failed")
 
         # 4. FINALIZE SESSION
@@ -84,17 +97,18 @@ class Librus:
         if "Brak dostępu" in test.text:
             raise Exception("Session failed")
 
-        logging.info("Login OK")
+        logger.info("Login OK")
     
     def close(self):
-        self.session.cookies.clear()
+        # self.session.cookies.clear()
+        self.session.close()
     
     def sprawdz_wiadomosci(self):
         try:
             resp = self.session.get("https://synergia.librus.pl/wiadomosci/5", timeout=50)
             resp.raise_for_status()
         except requests.RequestException as e:
-            logging.error("Pobieranie listy wiadomości nie powiodło się: %s", e)
+            logger.error("Pobieranie listy wiadomości nie powiodło się: %s", e)
             return []
 
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
@@ -117,7 +131,7 @@ class Librus:
             resp = self.session.get("https://synergia.librus.pl/ogloszenia", timeout=10)
             resp.raise_for_status()
         except requests.RequestException as e:
-            logging.error("Pobieranie ogłoszeń nie powiodło się: %s", e)
+            logger.error("Pobieranie ogłoszeń nie powiodło się: %s", e)
             return []
 
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
@@ -148,7 +162,7 @@ class Librus:
             resp = self.session.get(f"https://synergia.librus.pl{id_}", timeout=10)
             resp.raise_for_status()
         except requests.RequestException as e:
-            logging.error("Pobieranie wiadomości %s nie powiodło się: %s", id_, e)
+            logger.error("Pobieranie wiadomości %s nie powiodło się: %s", id_, e)
             return None
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
         content = soup.find("div", {"class": "container-message-content"})
@@ -163,9 +177,9 @@ class Command(BaseCommand):
     # ========================
     #  Funkcje pomocnicze
     # ========================
-    def aktualizuj_baze(librus_api, dziecko_obj):
+ 
+    def aktualizuj_baze(self, librus_api, dziecko_obj):
         wiadomosci = librus_api.sprawdz_wiadomosci()
-        dziecko_obj = dziecko_obj
         for w in wiadomosci:
 
             juz_jest = Wiadomosc.objects.filter(
@@ -176,11 +190,20 @@ class Command(BaseCommand):
             if not juz_jest:
                 tresc = librus_api.pobierz_tresc(w["id"])
                 if tresc:
-                    # Tworzymy nowy obiekt w bazie
+                    data_obj = parse_librus_date(w.get("data"))
+
+                    if not data_obj:
+                        logger.warning(
+                            "Nieprawidłowa data w wiadomości %s: %s",
+                            w.get("id"),
+                            w.get("data")
+                        )
+
+                    logger.debug("DATA: %s", data_obj)
                     nowa_wiadomosc = Wiadomosc.objects.create(
                         wiadomosc_id=w["id"],
                         dziecko=dziecko_obj,
-                        librus_data=w["data"], # Tu pamiętaj o poprawnym formacie daty!
+                        librus_data=data_obj, # Tu pamiętaj o poprawnym formacie daty!
                         nadawca=w["nadawca"],
                         temat=w["temat"],
                         tresc=tresc
@@ -190,18 +213,28 @@ class Command(BaseCommand):
                     nowa_wiadomosc.wyslij_powiadomienie()
 
 
-    def aktualizuj_ogloszenia(librus_api, dziecko_obj):
-        dziecko_obj = dziecko_obj
+    def aktualizuj_ogloszenia(self, librus_api, dziecko_obj):
         for o in librus_api.sprawdz_ogloszenia():
             juz_jest = Ogloszenie.objects.filter(
                 ogloszenie_id=o["id"], 
                 dziecko=dziecko_obj
             ).exists()
             if not juz_jest:
+                data_obj = parse_librus_date(o.get("data"))
+
+                if not data_obj:
+                    logger.warning(
+                        "Nieprawidłowa data w ogłoszeniu %s: %s",
+                        o.get("id"),
+                        o.get("data")
+                    )
+
+                logger.debug("DATA: %s", data_obj)
                 nowe_ogloszenie = Ogloszenie.objects.create(
                     ogloszenie_id=o["id"],
                     dziecko=dziecko_obj,
-                    librus_data=["data"], # Tu pamiętaj o poprawnym formacie daty!
+                    librus_data=data_obj,
+                    nadawca=o["kto"],
                     tytul=o["tytul"],
                     tresc=o['tresc']
                 )    
@@ -209,9 +242,9 @@ class Command(BaseCommand):
                 nowe_ogloszenie.wyslij_powiadomienie()        
 
     def handle(self, *args, **options):
-        logging.info("Rozpoczynam import danych...wiadomości")   
+        logger.info("Rozpoczynam import danych...wiadomości")   
                     
-        logging.info("--- START PROGRAMU ---")
+        logger.info("--- START PROGRAMU ---")
         # Definiujemy listę dzieci i ich dane (pobierane z .env)
         konfiguracja_dzieci = [
             {
@@ -229,27 +262,31 @@ class Command(BaseCommand):
         for dziecko in konfiguracja_dzieci:
             # Sprawdzamy, czy dane w .env w ogóle istnieją
             if not dziecko["user"] or not dziecko["pass"]:
-                logging.warning(f"Brak danych logowania dla: {dziecko['name']}. Pomijam.")
+                logger.warning(f"Brak danych logowania dla: {dziecko['name']}. Pomijam.")
                 continue
 
             librus_client = None
             try:
-                logging.info(f"Rozpoczynam synchronizację dla: {dziecko['name']}")
+                logger.info(f"Rozpoczynam synchronizację dla: {dziecko['name']}")
                 # 1. Logowanie
                 librus_client = Librus(dziecko["user"], dziecko["pass"], dziecko["name"])
-                kto = 'Joanna' if dziecko["name"] == 'Asia' else 'Zuzanna'
-                dziecko_obj = Dziecko.objects.get(imie=kto)
+                dziecko_obj = Dziecko.objects.filter(
+                    user__username__iexact=dziecko["name"]
+                ).first()
+                if not dziecko_obj:
+                    logger.error(f"Nie znaleziono dziecka w DB: {dziecko['name']}")
+                    continue
                 self.stdout.write(self.style.SUCCESS(dziecko_obj))
                 # 2. Pobieranie danych (używamy Twoich funkcji pomocniczych)
-                aktualizuj_baze(librus_client, dziecko_obj)
-                aktualizuj_ogloszenia(librus_client, dziecko_obj)
+                self.aktualizuj_baze(librus_client, dziecko_obj)
+                self.aktualizuj_ogloszenia(librus_client, dziecko_obj)
                 
-                logging.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
+                logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
             except Exception as e:
-                logging.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
+                logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
             finally:
                 if librus_client:
                     librus_client.close()
-                    logging.debug(f"Sesja dla {dziecko['name']} zamknięta.")
-        logging.info("--- KONIEC PROGRAMU ---")
+                    logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
+        logger.info("--- KONIEC PROGRAMU ---")
         

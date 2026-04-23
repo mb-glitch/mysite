@@ -1,19 +1,19 @@
 from django.db import models
 from django.core.mail import send_mail
 from django.utils import timezone
+from django.contrib.auth.models import User
 import logging
 
 class Dziecko(models.Model):
-    imie = models.CharField(max_length=100)
-    nazwisko = models.CharField(max_length=100)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
     librus_login = models.CharField(max_length=100, unique=True)
+
     class Meta:
         verbose_name_plural = "Dzieci"
         
     def __str__(self):
-        return f"{self.imie} {self.nazwisko}"
-        
-
+        return self.user.get_full_name()
+            
 
 class Wiadomosc(models.Model):
     wiadomosc_id = models.CharField(max_length=200)
@@ -68,7 +68,8 @@ class Wiadomosc(models.Model):
 
 class Ogloszenie(models.Model):
     ogloszenie_id = models.CharField(max_length=100)
-    dziecko = models.CharField(max_length=200)
+    dziecko = models.ForeignKey(Dziecko, on_delete=models.CASCADE, related_name='ogloszenia', null=True)
+    nadawca = models.CharField(max_length=200, null=True, blank=True)
     librus_data = models.DateTimeField(null=True, blank=True)
     tytul = models.CharField(max_length=255)
     tresc = models.TextField()

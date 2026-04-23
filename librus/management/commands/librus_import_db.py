@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import datetime
 from django.core.management.base import BaseCommand
@@ -30,16 +31,10 @@ class Command(BaseCommand):
 
         for row in rows:
             imie_z_bazy = row['dziecko'].strip()
-            imie_z_bazy = 'Joanna' if imie_z_bazy == 'Asia' else 'Zuzanna'
-            # 1. Pobierz lub stwórz dziecko
-            dziecko_obj, created = Dziecko.objects.get_or_create(
-                imie__iexact=imie_z_bazy,
-                defaults={
-                    'imie': imie_z_bazy.capitalize(),
-                    'nazwisko': '---',
-                    'librus_login': f"login_{imie_z_bazy.lower()}"
-                }
-            )
+            dziecko_obj = Dziecko.objects.filter(
+                user__username__iexact=imie_z_bazy
+            ).first()
+        
 
             # 2. Parsowanie daty
             data_otrzymania = None
@@ -76,16 +71,10 @@ class Command(BaseCommand):
 
         for row in rows:
             imie_z_bazy = row['dziecko'].strip()
-            imie_z_bazy = 'Joanna' if imie_z_bazy == 'Asia' else 'Zuzanna'
-            # 1. Pobierz lub stwórz dziecko
-            dziecko_obj, created = Dziecko.objects.get_or_create(
-                imie__iexact=imie_z_bazy,
-                defaults={
-                    'imie': imie_z_bazy.capitalize(),
-                    'nazwisko': '---',
-                    'librus_login': f"login_{imie_z_bazy.lower()}"
-                }
-            )
+            # 1. Pobierz dziecko
+            dziecko_obj = Dziecko.objects.filter(
+                user__username__iexact=imie_z_bazy
+            ).first()
 
             # 2. Parsowanie daty
             data_otrzymania = None
