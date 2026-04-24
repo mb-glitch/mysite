@@ -2,3 +2,5 @@ django
 requests
 bs4
 dotenv
+mysqlclient
+
