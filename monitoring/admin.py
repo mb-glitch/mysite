@@ -1,3 +1,21 @@
 from django.contrib import admin
+from .models import MonitoredService, LogEntry
 
-# Register your models here.
+
+class LogEntryInline(admin.TabularInline):
+    model = LogEntry
+    extra = 0
+    ordering = ('-checked_at',)
+    readonly_fields = ('status', 'status_code', 'response_time_ms', 'checked_at', 'message')
+    can_delete = False
+    max_num = 5  # 👈 tylko kilka ostatnich
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MonitoredService)
+class MonitoredServiceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'is_active', 'api_token')
+    search_fields = ('name',)
+    inlines = [LogEntryInline]
