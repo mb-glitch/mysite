@@ -3,7 +3,7 @@ import logging
 import requests
 import bs4
 import os
-import time
+from mymonitoring import Monitoring
 from pathlib import Path
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -22,22 +22,6 @@ logger = logging.getLogger('librus') # musi być zgodne z nazwą w settings.py
 # ========================
 #  Librus
 # ========================
-
-def monit_sent(status, status_code=None,execute_time_ms=None, message=None):
-    data = {
-        "status": status,
-        "status_code": status_code,
-        "execute_time_ms": execute_time_ms,
-        "message": message
-    }
-
-    headers = {
-        "Authorization": "Token a4063c8ae06cb85e3d9fdbc9a45dfeef82fdabca"
-    }
-
-    response = requests.post("http://127.0.0.1:8000/api/monitoring/", json=data, headers=headers)
-    logger.info(response.status_code)
-    logger.info(response.text)
 
 def parse_librus_date(value):
     if not value:
@@ -280,6 +264,8 @@ class Command(BaseCommand):
                 ogloszenie.wyslij_powiadomienie()
 
     def handle(self, *args, **options):
+        monit = Monitoring()
+        monit.start()
         logger.info("Rozpoczynam import danych...wiadomości")   
                     
         logger.info("--- START PROGRAMU ---")
@@ -298,7 +284,6 @@ class Command(BaseCommand):
         ]
 
         for dziecko in konfiguracja_dzieci:
-            monit_start_time = time.perf_counter()
             # Sprawdzamy, czy dane w .env w ogóle istnieją
             if not dziecko["user"] or not dziecko["pass"]:
                 logger.warning(f"Brak danych logowania dla: {dziecko['name']}. Pomijam.")
@@ -321,16 +306,15 @@ class Command(BaseCommand):
                 self.aktualizuj_ogloszenia(librus_client, dziecko_obj)
                 
                 logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
-                monit_status = 'ok'
+                monit.status = 'ok'
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
-                monit_status = 'fail'
+                monit.status = 'fail'
             finally:
                 if librus_client:
                     librus_client.close()
                     logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
-                    monit_end_time = time.perf_counter()
-                    duration_ms = int((monit_end_time - monit_start_time) * 1000)
-                    monit_sent(status=monit_status, execute_time_ms=duration_ms)
+                    monit.stop()
+                    monit.send()
         logger.info("--- KONIEC PROGRAMU ---")
         
