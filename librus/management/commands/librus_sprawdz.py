@@ -10,14 +10,8 @@ from django.utils import timezone
 from librus.models import Dziecko, Wiadomosc, Ogloszenie
 from dotenv import load_dotenv
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Pobiera ścieżkę do folderu, w którym znajduje się ten konkretny plik .py
-CURRENT_DIR = Path(__file__).resolve().parent
-ENV_PATH = CURRENT_DIR / ".env.librus"
-
-load_dotenv(dotenv_path=ENV_PATH)
-logger = logging.getLogger('librus') # musi być zgodne z nazwą w settings.py
+load_dotenv()
+logger = logging.getLogger(__name__)
 
 # ========================
 #  Librus

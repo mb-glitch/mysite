@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from django.contrib.auth.models import User
 
 
@@ -39,4 +40,5 @@ class LogEntry(models.Model):
         verbose_name_plural = "Wpisy usług"
         
     def __str__(self):
-        return f"{self.service} - {self.status} - {self.checked_at:%Y-%m-%d %H:%M:%S}"
+        local_date = timezone.localtime(self.checked_at)
+        return f"{self.service} - {self.status} - {local_date:%Y-%m-%d %H:%M:%S}"

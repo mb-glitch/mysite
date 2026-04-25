@@ -18,8 +18,13 @@ load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+LOGS_DIR = BASE_DIR / "logs"
 
-
+# Automatyczne tworzenie folderu, jeśli nie istnieje, przy starcie aplikacji
+if not LOGS_DIR.exists():
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    
+    
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -151,14 +156,37 @@ STATIC_URL = 'static/'
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    # Formattery definiują WYGLĄD logów
+    "formatters": {
+        "verbose": {
+            "format": "{levelname:<8} {asctime} {name} {module} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {module} {message}",
+            "style": "{",
+        },
+    },
+    # Handlery definiują DOKĄD trafiają logi
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "simple", # Przypisanie wyglądu
         },
+    "file": {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "filename": LOGS_DIR / "general.log",
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": 30,
+        "formatter": "verbose",
+        "encoding": "utf-8",
     },
+    },
+    # Loggery definiują CO zbieramy
     "loggers": {
-        "librus": {
-            "handlers": ["console"],
+        "": {  # Root logger - łapie wszystko
+            "handlers": ["console", "file"],
             "level": "DEBUG",
         },
     },
