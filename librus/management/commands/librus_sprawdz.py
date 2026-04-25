@@ -3,6 +3,7 @@ import logging
 import requests
 import bs4
 import os
+import time
 from pathlib import Path
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -21,6 +22,22 @@ logger = logging.getLogger('librus') # musi być zgodne z nazwą w settings.py
 # ========================
 #  Librus
 # ========================
+
+def monit_sent(status, status_code=None,execute_time_ms=None, message=None):
+    data = {
+        "status": status,
+        "status_code": status_code,
+        "execute_time_ms": execute_time_ms,
+        "message": message
+    }
+
+    headers = {
+        "Authorization": "Token a4063c8ae06cb85e3d9fdbc9a45dfeef82fdabca"
+    }
+
+    response = requests.post("http://127.0.0.1:8000/api/monitoring/", json=data, headers=headers)
+    logger.info(response.status_code)
+    logger.info(response.text)
 
 def parse_librus_date(value):
     if not value:
@@ -213,7 +230,7 @@ class Command(BaseCommand):
                     nowa_wiadomosc.wyslij_powiadomienie()
 
 
-    def aktualizuj_ogloszenia(self, librus_api, dziecko_obj):
+    def aktualizuj_ogloszenia_old(self, librus_api, dziecko_obj):
         for o in librus_api.sprawdz_ogloszenia():
             juz_jest = Ogloszenie.objects.filter(
                 ogloszenie_id=o["id"], 
@@ -239,7 +256,28 @@ class Command(BaseCommand):
                     tresc=o['tresc']
                 )    
                 # Od razu próbujemy wysłać powiadomienie
-                nowe_ogloszenie.wyslij_powiadomienie()        
+                nowe_ogloszenie.wyslij_powiadomienie()
+                
+    def aktualizuj_ogloszenia(self, librus_api, dziecko_obj):
+        for o in librus_api.sprawdz_ogloszenia():
+            # Szukamy ogłoszenia o tym samym tytule, dacie i dla tego samego dziecka
+            ogloszenie, created = Ogloszenie.objects.get_or_create(
+                ogloszenie_id=o["id"], # lub kombinacja tytul/data
+                dziecko=dziecko_obj,
+                tresc=o["tresc"],
+                defaults={
+                    'nadawca': o["kto"],
+                    'tytul': o["tytul"],
+                    'librus_data': parse_librus_date(o.get("data"))
+                }
+            )
+
+            if not created:
+                # Jeśli ogłoszenie już istniało, to nic nie robimy
+                logger.debug(f"Nic nie robimy ogłoszenie istnieje: {o['tytul']}")
+            else:
+                logger.info(f"Dodano nowe ogłoszenie: {o['tytul']}")
+                ogloszenie.wyslij_powiadomienie()
 
     def handle(self, *args, **options):
         logger.info("Rozpoczynam import danych...wiadomości")   
@@ -260,6 +298,7 @@ class Command(BaseCommand):
         ]
 
         for dziecko in konfiguracja_dzieci:
+            monit_start_time = time.perf_counter()
             # Sprawdzamy, czy dane w .env w ogóle istnieją
             if not dziecko["user"] or not dziecko["pass"]:
                 logger.warning(f"Brak danych logowania dla: {dziecko['name']}. Pomijam.")
@@ -282,11 +321,16 @@ class Command(BaseCommand):
                 self.aktualizuj_ogloszenia(librus_client, dziecko_obj)
                 
                 logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
+                monit_status = 'ok'
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
+                monit_status = 'fail'
             finally:
                 if librus_client:
                     librus_client.close()
                     logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
+                    monit_end_time = time.perf_counter()
+                    duration_ms = int((monit_end_time - monit_start_time) * 1000)
+                    monit_sent(status=monit_status, execute_time_ms=duration_ms)
         logger.info("--- KONIEC PROGRAMU ---")
         

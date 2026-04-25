@@ -82,7 +82,7 @@ class Ogloszenie(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     
     class Meta:
-        unique_together = (('ogloszenie_id', 'dziecko'),)
+        # unique_together = (('ogloszenie_id', 'dziecko'),)
         verbose_name_plural = "Ogłoszenia"
         
     def wyslij_powiadomienie(self):

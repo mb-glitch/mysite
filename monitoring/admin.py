@@ -6,7 +6,7 @@ class LogEntryInline(admin.TabularInline):
     model = LogEntry
     extra = 0
     ordering = ('-checked_at',)
-    readonly_fields = ('status', 'status_code', 'response_time_ms', 'checked_at', 'message')
+    readonly_fields = ('status', 'status_code', 'execute_time_ms', 'checked_at', 'message')
     can_delete = False
     max_num = 5  # 👈 tylko kilka ostatnich
 

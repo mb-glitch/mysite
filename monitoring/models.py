@@ -5,7 +5,6 @@ from django.contrib.auth.models import User
 class MonitoredService(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     is_active = models.BooleanField(default=True)    
-    url = models.URLField(blank=True)
     timeout_ms = models.IntegerField(default=5000)
 
     class Meta:
@@ -29,9 +28,10 @@ class LogEntry(models.Model):
     
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, db_index=True)
     status_code = models.IntegerField(null=True, blank=True)
-    response_time_ms = models.IntegerField(null=True, blank=True)
+    # response_time_ms = models.IntegerField(null=True, blank=True)
+    execute_time_ms = models.IntegerField(null=True, blank=True)
     checked_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    message = models.TextField(blank=True)
+    message = models.TextField(null=True, blank=True)
     
 
     class Meta:
@@ -39,4 +39,4 @@ class LogEntry(models.Model):
         verbose_name_plural = "Wpisy usług"
         
     def __str__(self):
-        return f"{self.service.name} - {self.status} - {self.checked_at:%Y-%m-%d %H:%M:%S}"
+        return f"{self.service} - {self.status} - {self.checked_at:%Y-%m-%d %H:%M:%S}"
