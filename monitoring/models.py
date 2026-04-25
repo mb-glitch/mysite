@@ -1,23 +1,18 @@
 from django.db import models
-import secrets
+from django.contrib.auth.models import User
+
 
 class MonitoredService(models.Model):
-    name = models.CharField(max_length=100)
-    is_active = models.BooleanField(default=True)
-    api_token = models.CharField(max_length=64, unique=True, blank=True)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    is_active = models.BooleanField(default=True)    
     url = models.URLField(blank=True)
     timeout_ms = models.IntegerField(default=5000)
 
     class Meta:
         verbose_name_plural = "Usługi do monitorowania"
-
-    def save(self, *args, **kwargs):
-        if not self.api_token:
-            self.api_token = secrets.token_hex(32)
-        super().save(*args, **kwargs)
         
     def __str__(self):
-        return self.name
+        return self.user.username
         
 class LogEntry(models.Model):
     STATUS_CHOICES = [

@@ -2,5 +2,7 @@ django
 requests
 bs4
 dotenv
+whitenoise
+gunicorn
 mysqlclient
 

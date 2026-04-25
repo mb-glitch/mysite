@@ -16,6 +16,6 @@ class LogEntryInline(admin.TabularInline):
 
 @admin.register(MonitoredService)
 class MonitoredServiceAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_active', 'api_token')
-    search_fields = ('name',)
+    list_display = ('user__username', 'is_active')
+    search_fields = ('user__username',)
     inlines = [LogEntryInline]
