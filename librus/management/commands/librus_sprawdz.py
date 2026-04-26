@@ -259,7 +259,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         monit = Monitoring()
-        monit.start()
         logger.info("Rozpoczynam import danych...wiadomości")   
                     
         logger.info("--- START PROGRAMU ---")
@@ -300,15 +299,13 @@ class Command(BaseCommand):
                 self.aktualizuj_ogloszenia(librus_client, dziecko_obj)
                 
                 logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
-                monit.status = 'ok'
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
-                monit.status = 'fail'
+                monit.status_code = 1
             finally:
                 if librus_client:
                     librus_client.close()
                     logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
-                    monit.stop()
                     monit.send()
         logger.info("--- KONIEC PROGRAMU ---")
         
