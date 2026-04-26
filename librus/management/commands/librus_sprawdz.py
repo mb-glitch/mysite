@@ -301,11 +301,13 @@ class Command(BaseCommand):
                 logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
-                monit.status_code = 1
+                monit.message['error'] = str(e)
+                monit.status_code = 2
             finally:
                 if librus_client:
                     librus_client.close()
                     logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
+                    monit.message['dziecko'] = dziecko['name']
                     monit.send()
         logger.info("--- KONIEC PROGRAMU ---")
         
