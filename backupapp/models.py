@@ -12,8 +12,8 @@ class BackupInvitation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Zaproszenie dla {self.user.username} ({'Zużyte'
-        if self.is_used else 'Aktywne'})"
+        status = 'Zużyte' if self.is_used else 'Aktywne'
+        return f"Zaproszenie dla {self.user.username} ({status})"
         
 
 class BackupAgent(models.Model):
