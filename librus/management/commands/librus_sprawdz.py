@@ -293,7 +293,7 @@ class Command(BaseCommand):
                 if not dziecko_obj:
                     logger.error(f"Nie znaleziono dziecka w DB: {dziecko['name']}")
                     continue
-                self.stdout.write(self.style.SUCCESS(dziecko_obj))
+                logger.debug(dziecko_obj)
                 # 2. Pobieranie danych (używamy Twoich funkcji pomocniczych)
                 self.aktualizuj_baze(librus_client, dziecko_obj)
                 self.aktualizuj_ogloszenia(librus_client, dziecko_obj)

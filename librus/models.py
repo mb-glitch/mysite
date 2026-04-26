@@ -4,6 +4,8 @@ from django.utils import timezone
 from django.contrib.auth.models import User, Group
 import logging
 
+logger = logging.getLogger(__name__)
+
 class Dziecko(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     librus_login = models.CharField(max_length=100, unique=True)
@@ -63,10 +65,10 @@ class Wiadomosc(models.Model):
                 self.wyslane = True
                 self.sent_at = timezone.now()
                 self.save()
-                logging.info(f"Wysłano: {self.temat} ({self.dziecko})")
+                logger.info(f"Wysłano: {self.temat} ({self.dziecko})")
                 return True
         except Exception as e:
-            logging.error(f"Błąd wysyłki e-maila: {e}")
+            logger.error(f"Błąd wysyłki e-maila: {e}")
             return False
        
 
@@ -113,8 +115,8 @@ class Ogloszenie(models.Model):
                 self.wyslane = True
                 self.sent_at = timezone.now()
                 self.save()
-                logging.info(f"Wysłano: {self.tytul} ({self.dziecko})")
+                logger.info(f"Wysłano: {self.tytul} ({self.dziecko})")
                 return True
         except Exception as e:
-            logging.error(f"Błąd wysyłki e-maila: {e}")
+            logger.error(f"Błąd wysyłki e-maila: {e}")
             return False

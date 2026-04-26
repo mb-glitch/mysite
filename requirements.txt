@@ -1,4 +1,6 @@
 django
+djangorestframework
+django_extensions
 requests
 bs4
 dotenv
@@ -6,5 +8,4 @@ whitenoise
 gunicorn
 mysqlclient
 # Twoja lokalna paczka w trybie edytowalnym
--e /home/maciek/Projects/logger_setup
 -e /home/maciek/Projects/monitoring
