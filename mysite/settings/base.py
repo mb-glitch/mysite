@@ -17,24 +17,15 @@ load_dotenv()
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 LOGS_DIR = BASE_DIR / "logs"
 
 # Automatyczne tworzenie folderu, jeśli nie istnieje, przy starcie aplikacji
 if not LOGS_DIR.exists():
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    
-    
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-9n00b415sp6&9zw%tvz@sw+t9!rr747@!@rxn35rg#j!*8^*1('
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
-
-ALLOWED_HOSTS = ['192.168.5.172', '127.0.0.1']
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -89,31 +80,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'mysite.wsgi.application'
-
-
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
-DATABASES = {
-    'default2': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv("DB_NAME"),
-        'USER': os.getenv("DO_USER"),
-        'PASSWORD': os.getenv("DB_PASSWORD"),
-        'HOST': os.getenv("DB_HOST"), # lub 'localhost' jeśli baza jest lokalnie
-        'PORT': '3306',
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            # Jeśli wcześniej miałeś błąd SSL, możesz go tu wyłączyć:
-            # 'ssl': {'disabled': True} 
-        },
-    },
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
-
 
 
 
