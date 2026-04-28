@@ -17,6 +17,7 @@ class MonitoredService(models.Model):
     is_active = models.BooleanField(default=True)    
     timeout_ms = models.IntegerField(default=5000)
     last_check_at = models.DateTimeField(null=True, blank=True)
+    last_change_at = models.DateTimeField(null=True, blank=True)
     last_status = models.IntegerField(null=True, blank=True)
 
     class Meta:
@@ -78,39 +79,39 @@ class MonitoredService(models.Model):
         """Zwraca True tylko jeśli status jest 0 (OK)"""
         return self.status == 0
  
-    def wyslij_powiadomienie(self):
+    def sprawdz_status_i_wyslij_powiadomienie(self):
         current_status = self._get_monitoring_status()
-        current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
-        group = Group.objects.get(name="Monitoring")
-        recipient_list = group.user_set.values_list('email', flat=True)
-        recipient_list = list(recipient_list)
-        """Przygotowuje treść i wysyła e-mail."""
-        now = timezone.localtime(timezone.now())
-        pelna_tresc = (
-        f"Data wygenerowania emaila: {now:%Y-%m-%d %H:%M:%S}\n"
-        f"Uwaga zmiana statusu usługi {self.user.username}\n"
-        f"{self.last_status_display} --> {current_status_display}"
-        )
-        subject = f"MONITORING USŁUG ({self.user.username} - {current_status_display})"
-        try:
-            # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
-            success = send_mail(
-                subject,
-                pelna_tresc,
-                None, # Użyje DEFAULT_FROM_EMAIL z ustawień
-                recipient_list,
-                fail_silently=False,
+        if current_status != self.last_status:
+            current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
+            group = Group.objects.get(name="Monitoring")
+            recipient_list = group.user_set.values_list('email', flat=True)
+            recipient_list = list(recipient_list)
+            """Przygotowuje treść i wysyła e-mail."""
+            now = timezone.localtime(timezone.now())
+            pelna_tresc = (
+            f"Data wygenerowania emaila: {now:%Y-%m-%d %H:%M:%S}\n"
+            f"Uwaga zmiana statusu usługi {self.user.username}\n"
+            f"{self.last_status_display} --> {current_status_display}"
             )
-            
-            if success:
+            subject = f"MONITORING USŁUG ({self.user.username} - {current_status_display})"
+            try:
+                # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
+                success = send_mail(
+                    subject,
+                    pelna_tresc,
+                    None, # Użyje DEFAULT_FROM_EMAIL z ustawień
+                    recipient_list,
+                    fail_silently=False,
+                )
                 
-                self.last_status = current_status
-                self.last_check_at = timezone.now()
-                self.save(update_fields=["last_status", "last_check_at"])
-                return True
-        except Exception as e:
-            logger.error(f"Błąd wysyłki e-maila: {e}")
-            return False
+                if success:
+                    self.last_status = current_status
+                    self.last_change_at = timezone.now()
+                    self.save(update_fields=["last_status", "last_change_at"])
+                    return True
+            except Exception as e:
+                logger.error(f"Błąd wysyłki e-maila: {e}")
+                return False
         
         
 class LogEntry(models.Model):
