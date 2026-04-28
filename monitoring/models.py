@@ -82,6 +82,7 @@ class MonitoredService(models.Model):
     def sprawdz_status_i_wyslij_powiadomienie(self):
         current_status = self._get_monitoring_status()
         self.last_check_at = timezone.now()
+        self.save(update_fields=['last_check_at'])
         if current_status != self.last_status:
             current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
             group = Group.objects.get(name="Monitoring")
