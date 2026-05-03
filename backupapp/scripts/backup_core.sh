@@ -73,7 +73,7 @@ send_report() {
     ELAPSED=$((END_TIME - START_TIME))
     log "[DEBUG] Cały proces trwał: ${ELAPSED}s"
     payload=$(echo "$payload" | jq --argjson elapsed "$ELAPSED" \
-    '. + {extra: $elapsed}')
+    '. + {execute_time_ms: $elapsed}')
   
     curl -s -X POST "$SERVER" \
         -H "Authorization: Token $TOKEN" \
