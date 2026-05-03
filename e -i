@@ -1,0 +1,187 @@
+[33mcommit 5eebbf4c408ce9c37027dd250e48ed5d4fc186fc[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 20:29:27 2026 +0200
+
+    jednak się nie da
+
+[33mcommit ba14b9188cb4b648517572a41fbef1d753b6b6ad[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 20:24:45 2026 +0200
+
+    do usunięcia !
+
+[33mcommit 0241840c8961c622f497e3abd87b9579710cffa2[m[33m ([m[1;31morigin/main[m[33m)[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 20:17:58 2026 +0200
+
+    konfiguracja dla rclone
+
+[33mcommit badb2aee0a6cfdb546f473bfc3adbc3ce4377031[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 19:12:05 2026 +0200
+
+    brakujący import
+
+[33mcommit b3933983c0322950847b1b6e4d47d6b9fa9088e4[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 19:06:28 2026 +0200
+
+    zmiana ścieżki script
+
+[33mcommit 5421e7da32af1dd8f2fe3b5a3eca0cfa200e2b64[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 18:51:50 2026 +0200
+
+    zmiana nazwy zmiennej
+
+[33mcommit de171b895a79fcf5ca8e1ac693d90a6a2bdd4a68[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 18:45:35 2026 +0200
+
+    zmiana nazwy zmiennej
+
+[33mcommit b4bc6f7c2bffba45a24ed27f97cb8be092cdd55c[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun May 3 18:39:34 2026 +0200
+
+    Przerobienie skryptu backup na telefony rclone i google drive zamiast ssh
+
+[33mcommit 9099acf348d8d2f59fefcead5ab549c1f626f66b[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Tue Apr 28 21:09:55 2026 +0200
+
+    jeszcze jedno pole - kiedy ostatnio sprawdzałem - zapis.save()
+
+[33mcommit a30d2557d8cc2b5c8f0d1199628e3396bc1c2c7e[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Tue Apr 28 21:01:44 2026 +0200
+
+    jeszcze jedno pole - kiedy ostatnio sprawdzałem
+
+[33mcommit 9237eb8622797c4352271dbbfa729908285fc697[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Tue Apr 28 20:54:01 2026 +0200
+
+    dodanie manament command do wysyłki maili z monitoringu
+
+[33mcommit dc45f9f85011d16d992fc7a069138dc2f4cfc40a[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Tue Apr 28 19:48:42 2026 +0200
+
+    przeniesienie setting, żeby można było robic git pull
+
+[33mcommit b3addf0fce5202a17b114ecccc8a257686eb03c2[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun Apr 26 22:18:49 2026 +0200
+
+    powiadomienia o zmianie statusu monitoringu
+
+[33mcommit 46fedc033f00c4bb121ccda34587f7ac4b3b2765[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun Apr 26 14:41:31 2026 +0200
+
+    zmiana formatownia
+
+[33mcommit 73e1245de2b00674aa6687f52cfbec0b03ca3cc8[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun Apr 26 13:39:45 2026 +0200
+
+    dodałem wysyłkę exception do monitoringu
+
+[33mcommit cd576bd06bf499abaf00288db05c3b039d70c540[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun Apr 26 13:32:34 2026 +0200
+
+    jeszcze porządki w monitoring - pole json a w danych tylko status_code
+
+[33mcommit 489119d3985848db2ad244f951d658ceee9dbff2[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 22:34:53 2026 +0200
+
+    collectstatic
+
+[33mcommit 71604371eda9ad2c3c1015db2c466bc9e1b9d3f9[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 22:02:58 2026 +0200
+
+    poprawki w logowaniu tak żeby wszystko się zapisywało do log
+
+[33mcommit 6c32006785e73ec69f9ecaf96d1bdd0f11943ab3[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 16:53:02 2026 +0200
+
+    monitoring do oddzielnej paczki i potem import clasy
+
+[33mcommit a8c1f07a60f44ca79f5defda11013a18e3de1e3c[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 15:59:27 2026 +0200
+
+    poprawka w ogłoszeniach unique together - pozawalamy bo sprawdzam inaczej
+
+[33mcommit 7aac942b4345e1ef2c56c10796235e256ba39a03[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 14:15:30 2026 +0200
+
+    poprawki w modelu monitoringu i panelu admin - przeniesienie tokenu do usera
+
+[33mcommit 945972e8da330a119def245f46754b9841de1f81[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 25 00:07:03 2026 +0200
+
+    zmiany w monitoringu, admin
+
+[33mcommit 11e8c1de887c392b92b1f625f7c95fd0ddbde235[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Fri Apr 24 23:39:15 2026 +0200
+
+    początek monitoringu, oddanie połączenia do mariadb,inne drobne
+
+[33mcommit f7e9a1d5490013108ac89c62c26076859c3ccfc8[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Thu Apr 23 22:51:31 2026 +0200
+
+    poprawki w logging i w temacie maila
+
+[33mcommit f3f19be56bf4678899d369e42d50fdfcb25a6272[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Thu Apr 23 22:33:00 2026 +0200
+
+    dodałem automatyczną wysyłkę powiadomienia podczas tworzenia obiektu
+
+[33mcommit b129424a1763df7cb16683068c002a507a32e96f[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Thu Apr 23 22:03:48 2026 +0200
+
+    do git ignore dodana baza librusa
+
+[33mcommit 597905b352690a6bdb48c709566678955fd63095[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Thu Apr 23 22:01:47 2026 +0200
+
+    poprawione pobieranie danych z librusa, rozdzielony nadawca, poprawnie dodane dziecko jak object a nie nazwa
+
+[33mcommit 6d354678f0d1ae580f8f67b9f28b64276ad0c798[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Thu Apr 23 18:35:31 2026 +0200
+
+    pierdoły
+
+[33mcommit 1e672783fdb681f00ceccc1db54a53b13877091e[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Wed Apr 22 23:08:55 2026 +0200
+
+    malutka poprawka - w iporcie starej bazy - srawdzam czy jest plik
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit 123c347f737a1d877d9a1cfa03f998a498f80afc[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sun Apr 19 22:27:38 2026 +0200
+
+    dodałem modele i część obsługi librus teraz srawdzam kolejne błedy
+
+[33mcommit 6c4d591c426ace58a7acd379c93247c89d794ed7[m
+Author: Maciej Bilicki <macbilicki@gmail.com>
+Date:   Sat Apr 18 17:28:41 2026 +0200
+
+    first commit
