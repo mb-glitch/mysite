@@ -13,8 +13,8 @@ from django.contrib.auth.decorators import login_required
 
 from pathlib import Path
 from django.urls import reverse
-
 from django.utils import timezone
+from django.conf import settings
 
 
 SCRIPT_PATH = settings.BASE_DIR / "backupapp" / "scripts" / "backup_core.sh"
