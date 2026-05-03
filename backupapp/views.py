@@ -92,7 +92,7 @@ def backup_dashboard(request):
         # TERAZ JEST WEWNĄTRZ PĘTLI
         cmd_final = (
             f"printf '{user_token.key}' > ~/.backup_token && "
-            f"curl -s -L -H 'Authorization: Token {user_token.key}' {script_url} > ~/run_backup.sh && "
+            f"curl -s -L -H 'Authorization: Token {user_token.key}' {script_url} > ~/backup_core.sh && "
             f"chmod +x ~/run_backup.sh && "
             f"curl -s {status_url} > /dev/null && "
             f"echo 'Konfiguracja zakończona sukcesem!'"
@@ -101,7 +101,7 @@ def backup_dashboard(request):
         cmd_scheduler = (
             "termux-job-scheduler --cancel --job-id 101 && "
             "termux-job-scheduler --job-id 101 "
-            "--script ~/run_backup.sh "
+            "--script ~/backup_core.sh "
             "--period 3600000 "
             "--persisted true && "
             "echo 'Harmonogram ustawiony na co 1h ale skrypt powinien uruchomić się raz dziennie!'"
