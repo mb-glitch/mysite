@@ -18,6 +18,7 @@ from django.conf import settings
 
 
 SCRIPT_PATH = settings.BASE_DIR / "backupapp" / "scripts" / "backup_core.sh"
+RCLONE_CONF_PATH = settings.BASE_DIR / "backupapp" / "scripts" / "rclone.conf"
 SCRIPT_VERSION = "2026-03-12 21:00"  # aktualizuj przy zmianach
 
 # ======================================================
@@ -56,6 +57,19 @@ def get_backup_script(request):
     except Exception as e:
         return HttpResponse(f"Server error: {str(e)}", status=500)      
         
+def get_rclone_conf(request):
+    try:
+        with open(RCLONE_CONF_PATH, 'r', encoding='utf-8') as f:
+            content = f.read()
+        response = HttpResponse(content, content_type='text/x-sh')
+        response['Content-Type'] = 'text/x-sh; charset=utf-8'
+        response['Cache-Control'] = 'no-cache'
+        return response
+    except FileNotFoundError:
+        return HttpResponse("Script not found", status=404)
+    except Exception as e:
+        return HttpResponse(f"Server error: {str(e)}", status=500) 
+        
 def backup_dashboard(request):
     active_invites = BackupInvitation.objects.filter(is_used=False)
 
@@ -88,10 +102,15 @@ def backup_dashboard(request):
         script_url = request.build_absolute_uri(
             reverse('backup-core')
         )
+        
+        rclone_url = request.build_absolute_uri(
+            reverse('rclone')
+        )
 
         # TERAZ JEST WEWNĄTRZ PĘTLI
         cmd_final = (
             # f"printf '{user_token.key}' > ~/.backup_token && "
+            f"curl -s -L -H 'Authorization: Token {user_token.key}' {rclone_url} > ~/rclone.conf && "
             f"curl -s -L -H 'Authorization: Token {user_token.key}' {script_url} > ~/backup_core.sh && "
             f"chmod +x ~/backup_core.sh && "
             f"curl -s {status_url} > /dev/null && "
