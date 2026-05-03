@@ -17,7 +17,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 
-SCRIPT_PATH = Path("/home/maciek/Projects/mysite/backupapp/scripts/backup_core.sh")
+SCRIPT_PATH = settings.BASE_DIR / "backupapp" / "scripts" / "backup_core.sh"
 SCRIPT_VERSION = "2026-03-12 21:00"  # aktualizuj przy zmianach
 
 # ======================================================
@@ -91,9 +91,9 @@ def backup_dashboard(request):
 
         # TERAZ JEST WEWNĄTRZ PĘTLI
         cmd_final = (
-            f"printf '{user_token.key}' > ~/.backup_token && "
+            # f"printf '{user_token.key}' > ~/.backup_token && "
             f"curl -s -L -H 'Authorization: Token {user_token.key}' {script_url} > ~/backup_core.sh && "
-            f"chmod +x ~/run_backup.sh && "
+            f"chmod +x ~/backup_core.sh && "
             f"curl -s {status_url} > /dev/null && "
             f"echo 'Konfiguracja zakończona sukcesem!'"
         )
