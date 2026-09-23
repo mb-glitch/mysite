@@ -100,13 +100,20 @@ echo "=========================================================="
 echo "  Instalacja backupu telefonu dla: {username}"
 echo "=========================================================="
 
-echo "[1/6] Instalacja pakietów w Termuxie..."
-pkg update -y
-pkg install termux-api rclone openssh jq curl -y
+echo "[1/6] Sprawdzanie i instalacja pakietów w Termuxie..."
+export DEBIAN_FRONTEND=noninteractive
+pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl </dev/null
 
 echo "[2/6] Dostęp do pamięci Androida..."
-termux-setup-storage
-echo "-> Jeśli na ekranie telefonu pojawiło się okienko uprawnień, kliknij 'Zezwól'."
+if [ -d "$HOME/storage" ] && [ -d "$HOME/storage/shared" ]; then
+  echo "-> Uprawnienia do pamięci telefonu są już aktywne ($HOME/storage istnieje)."
+else
+  echo "-> Wywoływanie uprawnień do pamięci..."
+  termux-setup-storage </dev/null 2>/dev/null || true
+  echo "-> Jeśli na ekranie telefonu pojawiło się okienko Androida, kliknij 'Zezwól'."
+  echo "-> Czekam 5 sekund na zatwierdzenie uprawnień w systemie..."
+  sleep 5
+fi
 
 # Wykrywanie karty SD (3 niezawodne metody bez potrzeby uprawnień root)
 SD_DETECTED=""
@@ -132,7 +139,7 @@ fi
 echo "[3/6] Konfiguracja klucza SSH..."
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 if [ ! -f ~/.ssh/id_ed25519 ]; then
-  ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+  ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
 fi
 chmod 600 ~/.ssh/id_ed25519
 
@@ -153,10 +160,10 @@ SSHEOF
 chmod 600 ~/.ssh/config
 
 echo "-> Podaj JEDNORAZOWO hasło do Raspberry Pi ({ssh_user}@{server_ip}):"
-ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip}
+ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip} < /dev/tty || ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip}
 
 # Tworzenie katalogów na Pi dla tego użytkownika (z małej litery)
-ssh {ssh_user}@{server_ip} "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty'"
+ssh {ssh_user}@{server_ip} "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty'" < /dev/null
 
 echo "[4/6] Tworzenie głównego katalogu ~/backup na telefonie i konfiguracja..."
 BACKUP_DIR="$HOME/backup"
@@ -288,6 +295,9 @@ termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period 
 # Oznaczenie tokenu jako skonfigurowany
 curl -s "{status_url}" > /dev/null 2>&1 || true
 
+# Posprzątanie tymczasowego instalatora
+rm -f "$HOME/setup.sh" 2>/dev/null || true
+
 echo ""
 echo "=========================================================="
 echo "  GOTOWE! Backup dla {username} skonfigurowany w ~/backup."
@@ -300,7 +310,7 @@ echo "=========================================================="
         return HttpResponse(bash_script, content_type='text/plain; charset=utf-8')
 
     # Jeśli otwarto w przeglądarce telefonu:
-    one_liner = f"curl -sL {script_url} | bash"
+    one_liner = f"curl -sL {script_url} -o ~/setup.sh && bash ~/setup.sh"
     return render(request, 'setup.html', {
         'user': user,
         'token': token,
@@ -328,7 +338,7 @@ def backup_dashboard(request):
 
         setup_url = request.build_absolute_uri(reverse('setup_phone', args=[token_key]))
         claim_url = request.build_absolute_uri(reverse('claim_invitation', args=[token_key]))
-        one_liner = f"curl -sL {setup_url} | bash"
+        one_liner = f"curl -sL {setup_url} -o ~/setup.sh && bash ~/setup.sh"
 
         display_data.append({
             'user': user_name,
