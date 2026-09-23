@@ -1,82 +1,254 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instalacja Backup</title>
-    <style>
-        body { font-family: sans-serif; background: #f4f7f6; padding: 20px; color: #333; }
-        .container { max-width: 650px; margin: 0 auto; }
-        .card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin-bottom: 30px; }
-        .step { margin-bottom: 20px; padding: 15px; border-left: 4px solid #1a73e8; background: #f8faff; border-radius: 0 8px 8px 0; }
-        .step h3 { margin: 0 0 10px 0; font-size: 0.9em; color: #1a73e8; text-transform: uppercase; }
-        code { display: block; background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.8em; word-break: break-all; margin-bottom: 10px; }
-        .btn { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; width: 100%; }
-        .btn:hover { background: #1557b0; }
-        .btn.success { background: #059669; }
-        .closed { text-align: center; padding: 50px; background: white; border-radius: 15px; border: 2px dashed #ccc; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Backupu - Aktywne Zaproszenia</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 24px 16px;
+      min-height: 100vh;
+    }
+    .container { max-width: 760px; margin: 0 auto; }
+    header { margin-bottom: 24px; }
+    h1 { font-size: 1.5rem; color: #10b981; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-top: 4px; }
+    
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 10px;
+    }
+    .user-info { display: flex; align-items: center; gap: 10px; }
+    .username { font-size: 1.15rem; font-weight: bold; color: #38bdf8; font-family: monospace; }
+    .badge-avail {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      background: #3b2804;
+      color: #fbbf24;
+      border: 1px solid #d97706;
+    }
+    
+    .date { font-size: 0.75rem; color: #64748b; }
+    
+    .field-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    
+    .token-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      background: #090d16;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+    }
+    .token-text {
+      font-family: monospace;
+      color: #a78bfa;
+      font-size: 0.85rem;
+      flex: 1;
+      word-break: break-all;
+    }
+    .btn-copy-sm {
+      background: #475569;
+      color: #f8fafc;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-copy-sm:hover { background: #64748b; }
+
+    code.cmd-block {
+      display: block;
+      background: #090d16;
+      color: #38bdf8;
+      padding: 12px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.8rem;
+      word-break: break-all;
+      border: 1px solid #334155;
+      margin-bottom: 12px;
+      user-select: all;
+    }
+    .actions-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    @media (max-width: 580px) {
+      .actions-grid { grid-template-columns: 1fr; }
+    }
+    .btn-main {
+      background: #10b981;
+      color: #022c22;
+      border: none;
+      padding: 11px 16px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: 0.15s;
+      text-align: center;
+    }
+    .btn-main:active { transform: scale(0.98); }
+
+    .btn-dismiss {
+      background: #334155;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+      padding: 11px 16px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+      transition: 0.15s;
+    }
+    .btn-dismiss:hover {
+      background: #dc2626;
+      color: #fff;
+      border-color: #b91c1c;
+    }
+
+    .open-link {
+      display: inline-block;
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: #38bdf8;
+      text-decoration: none;
+    }
+    .open-link:hover { text-decoration: underline; }
+
+    .empty-state {
+      text-align: center;
+      padding: 50px 20px;
+      background: #1e293b;
+      border-radius: 14px;
+      border: 2px dashed #334155;
+    }
+    .empty-icon { font-size: 3rem; margin-bottom: 14px; }
+    .empty-title { color: #34d399; font-size: 1.35rem; font-weight: 700; margin-bottom: 8px; }
+    .empty-desc { color: #94a3b8; font-size: 0.92rem; max-width: 500px; margin: 0 auto 24px auto; line-height: 1.6; }
+    .empty-hint {
+      background: #090d16;
+      border: 1px solid #334155;
+      padding: 16px 20px;
+      border-radius: 10px;
+      display: inline-block;
+      text-align: left;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+  </style>
 </head>
 <body>
+  <div class="container">
+    <header>
+      <h1>📱 Aktywne zaproszenia instalacji backupu</h1>
+      <p class="subtitle">Lista telefonów oczekujących na uruchomienie instalatora w Termuxie.</p>
+    </header>
 
-<div class="container">
-    {% if is_closed %}
-        <div class="closed">
-            <h1>🔒 Panel oczekuje</h1>
-            <p>Odznacz "is_used" w Adminie, aby rozpocząć nową instalację.</p>
+    {% if not has_active %}
+      <div class="empty-state">
+        <div class="empty-icon">🎉</div>
+        <div class="empty-title">Wszystkie telefony są skonfigurowane!</div>
+        <p class="empty-desc">
+          Brak oczekujących instalacji. Po skonfigurowaniu każdego telefonu zaproszenie jest automatycznie oznaczane jako zużyte i znika z tej listy.
+        </p>
+        <div class="empty-hint">
+          💡 <strong>Chcesz dodać nowy telefon lub skonfigurować go ponownie?</strong><br>
+          Przejdź do <a href="/admin/backupapp/backupinvitation/" target="_blank" style="color: #38bdf8; font-weight: bold; text-decoration: underline;">Django Admin &rarr; Zaproszenia do backupu</a> i odznacz pole <code>is_used</code> przy danym użytkowniku lub utwórz nowy rekord!
         </div>
+      </div>
     {% else %}
-        {% for item in invitations %}
-            <div class="card">
-                <h1 style="margin-top:0;">📱 Instalacja: {{ item.user }}</h1>
-                <p style="color: #666;">Wykonaj poniższe kroki po kolei w Termux:</p>
-
-                <div class="step">
-                    <h3>Krok 1: Pakiety systemowe</h3>
-                    <code id="p-{{ forloop.counter }}">{{ item.cmd_packages }}</code>
-                    <button class="btn" onclick="copy('p-{{ forloop.counter }}', this)">📋 KOPIUJ KROK 1</button>
-                </div>
-
-                <div class="step">
-                    <h3>Krok 2: Konfiguracja kluczy</h3>
-                    <code id="k-{{ forloop.counter }}">{{ item.cmd_keys }}</code>
-                    <button class="btn" onclick="copy('k-{{ forloop.counter }}', this)">📋 KOPIUJ KROK 2</button>
-                </div>
-                
-                <div class="step" style="border-left-color: #059669; background: #f0fff4;">
-                    <h3>Krok 3: Autoryzacja i Skrypt</h3>
-                    <code id="s-{{ forloop.counter }}">{{ item.cmd_final }}</code>
-                    <button class="btn" style="background: #059669;" onclick="copy('s-{{ forloop.counter }}', this)">🚀 FINALIZUJ I KOPIUJ</button>
-                </div>
-                
-                <div class="step" style="border-left-color: #6366f1; background: #f5f3ff;">
-                  <h3>Krok 4: Automatyczny Backup (Opcjonalnie)</h3>
-                  <p style="font-size: 0.8em; color: #4338ca; margin-bottom: 5px;">
-                      Zautomatyzuj proces, aby backup robił się sam raz na dobę podczas ładowania.
-                  </p>
-                  <code id="s-job-{{ forloop.counter }}">{{ item.cmd_scheduler }}</code>
-                  <button class="btn" style="background: #6366f1;" onclick="copy('s-job-{{ forloop.counter }}', this)">⏰ USTAW HARMONOGRAM</button>
-                </div>
-
+      {% for item in invitations %}
+        <div class="card">
+          <div class="card-header">
+            <div class="user-info">
+              <span class="username">👤 {{ item.user }}</span>
+              <span class="badge-avail">⏳ DOSTĘPNE DO INSTALACJI</span>
             </div>
-        {% endfor %}
+            {% if item.created_at %}
+              <span class="date">{{ item.created_at }}</span>
+            {% endif %}
+          </div>
+
+          <!-- Token autoryzacyjny z szybkim kopiowaniem -->
+          <div class="field-label">Token użytkownika (DRF):</div>
+          <div class="token-row">
+            <span class="token-text" id="token-{{ forloop.counter }}">{{ item.token }}</span>
+            <button class="btn-copy-sm" onclick="copyText('token-{{ forloop.counter }}', this)">
+              Kopiuj Token
+            </button>
+          </div>
+
+          <!-- Gotowy jednolinijkowiec -->
+          <div class="field-label">Polecenie do wklejenia w Termuxie:</div>
+          <code class="cmd-block" id="cmd-{{ forloop.counter }}">{{ item.one_liner }}</code>
+
+          <div class="actions-grid">
+            <button class="btn-main" onclick="copyText('cmd-{{ forloop.counter }}', this)">
+              📋 KOPIUJ POLECENIE TERMUX
+            </button>
+            <a href="{{ item.claim_url }}?redirect=1" class="btn-dismiss" title="Oznacz jako zużyte i schowaj z listy" onclick="return confirm('Oznaczyć zaproszenie dla {{ item.user }} jako zużyte? Zniknie ono z tej listy.')">
+              ✅ Oznacz jako zużyte
+            </a>
+          </div>
+
+          <a href="{{ item.setup_url }}" target="_blank" class="open-link">
+            🔗 Otwórz stronę instalacji w przeglądarce telefonu &rarr;
+          </a>
+        </div>
+      {% endfor %}
     {% endif %}
-</div>
+  </div>
 
-<script>
-    function copy(id, btn) {
-        const text = document.getElementById(id).innerText;
-        navigator.clipboard.writeText(text).then(() => {
-            const oldText = btn.innerText;
-            btn.innerText = "✅ SKOPIOWANO!";
-            btn.classList.add('success');
-            setTimeout(() => {
-                btn.innerText = oldText;
-                btn.classList.remove('success');
-            }, 1500);
-        });
+  <script>
+    function copyText(elemId, btn) {
+      const text = document.getElementById(elemId).innerText.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const old = btn.innerText;
+        btn.innerText = "✅ Skopiowano!";
+        setTimeout(() => { btn.innerText = old; }, 1800);
+      });
     }
-</script>
-
+  </script>
 </body>
 </html>
+

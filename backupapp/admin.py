@@ -1,16 +1,23 @@
 from django.contrib import admin
-from .models import BackupInvitation
-from django.utils import timezone
-from datetime import timedelta
+from .models import BackupInvitation, BackupAgent
 
 
 @admin.register(BackupInvitation)
 class BackupInvitationAdmin(admin.ModelAdmin):
-    # To sprawi, że w tabeli będziesz widział od razu ważne informacje
+    # Wyświetla Token użytkownika oraz status czy jest już użyty
     list_display = ('user', 'token_link', 'is_used', 'created_at')
-    # Dodanie filtrów po prawej stronie
-    list_filter = ('is_used', 'user')
-    # Możliwość wyszukiwania po nazwie użytkownika
+    list_filter = ('is_used', 'created_at')
+    search_fields = ('user__username', 'token_link')
+    readonly_fields = ('created_at',)
+
+    # Pozwala w 1 kliknięcie odznaczyć lub zaznaczyć is_used
+    list_editable = ('is_used',)
+
+
+@admin.register(BackupAgent)
+class BackupAgentAdmin(admin.ModelAdmin):
+    list_display = ('user', 'last_status_code', 'last_seen', 'created_at')
+    list_filter = ('last_status_code', 'last_seen')
     search_fields = ('user__username',)
-    # Tylko do odczytu dla kodu UUID (żeby go nie zmienić przez przypadek)
-    readonly_fields = ('token_link',)
+    readonly_fields = ('created_at', 'last_seen')
+

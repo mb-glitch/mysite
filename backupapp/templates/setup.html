@@ -1,24 +1,98 @@
 <!DOCTYPE html>
-<html>
+<html lang="pl">
 <head>
-    <title>Konfiguracja Backup</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: sans-serif; padding: 20px; line-height: 1.6; background: #f4f4f4; }
-        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        code { background: #272822; color: #f8f8f2; padding: 15px; display: block; overflow-x: auto; border-radius: 5px; margin: 15px 0; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instalacja Backup - {{ user.username }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 20px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 28px;
+      width: 100%;
+      max-width: 560px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+    }
+    h1 { margin-bottom: 10px; font-size: 1.4rem; color: #10b981; }
+    p { margin-bottom: 16px; font-size: 0.95rem; color: #94a3b8; line-height: 1.5; }
+    code {
+      display: block;
+      background: #090d16;
+      color: #38bdf8;
+      padding: 14px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      word-break: break-all;
+      border: 1px solid #334155;
+      margin-bottom: 16px;
+      user-select: all;
+    }
+    button {
+      background: #10b981;
+      color: #022c22;
+      border: none;
+      padding: 14px 20px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1rem;
+      width: 100%;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    button:active { transform: scale(0.98); }
+    .hint {
+      margin-top: 14px;
+      font-size: 0.8rem;
+      color: #64748b;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
-    <div class="box">
-        <h2>Cześć {{ user.username }}!</h2>
-        <p>Aby połączyć Twój telefon z serwerem backupu:</p>
-        <ol>
-            <li>Otwórz aplikację <b>Termux</b>.</li>
-            <li>Skopiuj i wklej poniższą komendę:</li>
-        </ol>
-        <code>{{ command }}</code>
-        <p><i>Po wykonaniu komendy ten link wygaśnie.</i></p>
+  <div class="card">
+    <h1>📱 Instalacja: {{ user.username }}</h1>
+    <p>Otwórz aplikację <b>Termux</b> na telefonie, wklej poniższe jedno polecenie i zatwierdź Enterem:</p>
+    
+    <code id="cmd">{{ one_liner }}</code>
+    
+    <button id="btn" onclick="copy()">📋 KOPIUJ JEDNOLINIJKOWIEC</button>
+    
+    <div class="hint">
+      Wskazówka: Możesz też bezpośrednio w Termuxie wpisać:<br>
+      <code>curl -sL {{ direct_url }} | bash</code>
     </div>
+  </div>
+
+  <script>
+    function copy() {
+      const text = document.getElementById('cmd').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('btn');
+        const oldText = btn.innerText;
+        btn.innerText = "✅ SKOPIOWANO DO SCHOWKA!";
+        btn.style.background = "#059669";
+        btn.style.color = "#ffffff";
+        setTimeout(() => {
+          btn.innerText = oldText;
+          btn.style.background = "#10b981";
+          btn.style.color = "#022c22";
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>
+
