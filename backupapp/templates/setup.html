@@ -63,24 +63,41 @@
 </head>
 <body>
   <div class="card">
-    <h1>📱 Instalacja: {{ user.username }}</h1>
-    <p>Otwórz aplikację <b>Termux</b> na telefonie, wklej poniższe jedno polecenie i zatwierdź Enterem:</p>
-    
-    <code id="cmd">{{ one_liner }}</code>
-    
-    <button id="btn" onclick="copy()">📋 KOPIUJ JEDNOLINIJKOWIEC</button>
-    
-    <div class="hint">
-      Wskazówka: Możesz też bezpośrednio w Termuxie wpisać:<br>
-      <code>curl -sL {{ direct_url }} | bash</code>
-    </div>
+    {% if is_used %}
+      <div style="text-align: center; padding: 12px 0;">
+        <div style="font-size: 3.2rem; margin-bottom: 14px;">🔒</div>
+        <h1 style="color: #f59e0b; margin-bottom: 10px;">Zaproszenie wygasło</h1>
+        <p style="color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin-bottom: 22px;">
+          Telefon dla użytkownika <b>{{ user.username }}</b> został już pomyślnie skonfigurowany. To zaproszenie jest oznaczone jako zużyte i link jest nieaktywny.
+        </p>
+        <div style="background: #090d16; border: 1px solid #334155; padding: 14px; border-radius: 8px; font-size: 0.85rem; color: #cbd5e1; text-align: left; line-height: 1.5;">
+          💡 <b>Potrzebujesz ponownej instalacji telefonu?</b><br>
+          W panelu administratora Django Admin (<code style="background:none; border:none; padding:0; color:#38bdf8; display:inline;">Zaproszenia</code>) odznacz pole <code>is_used</code> dla tego użytkownika, aby ponownie aktywować link!
+        </div>
+      </div>
+    {% else %}
+      <h1>📱 Instalacja: {{ user.username }}</h1>
+      <p>Otwórz aplikację <b>Termux</b> na telefonie, wklej poniższe jedno polecenie i zatwierdź Enterem:</p>
+      
+      <code id="cmd">{{ one_liner }}</code>
+      
+      <button id="btn" onclick="copy()">📋 KOPIUJ JEDNOLINIJKOWIEC</button>
+      
+      <div class="hint">
+        Wskazówka: Możesz też bezpośrednio w Termuxie wpisać:<br>
+        <code>curl -sL {{ direct_url }} -o ~/setup.sh && bash ~/setup.sh</code>
+      </div>
+    {% endif %}
   </div>
 
   <script>
     function copy() {
-      const text = document.getElementById('cmd').innerText;
+      const el = document.getElementById('cmd');
+      if (!el) return;
+      const text = el.innerText;
       navigator.clipboard.writeText(text).then(() => {
         const btn = document.getElementById('btn');
+        if (!btn) return;
         const oldText = btn.innerText;
         btn.innerText = "✅ SKOPIOWANO DO SCHOWKA!";
         btn.style.background = "#059669";

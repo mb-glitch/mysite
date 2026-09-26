@@ -1,87 +1,116 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# ==============================================================================
-# ~/backup/run_backup.sh - Lekki auto-aktualizator i dyspozytor zadań na telefonie
-# Uruchamiany automatycznie przez termux-job-scheduler co 1 godzinę.
-# Wszystkie pliki na telefonie znajdują się w jednym katalogu ~/backup.
-# ==============================================================================
 set -u
 
 BACKUP_DIR="$HOME/backup"
-mkdir -p "$BACKUP_DIR"
-cd "$BACKUP_DIR"
+LOCK_DIR="$BACKUP_DIR/.locks"
+LOG_DIR="$BACKUP_DIR/logs"
+BACKUP_LOG="$LOG_DIR/backup.log"
+MONITOR_URL="https://host109829.xce.pl/api/monitoring/"
 
-LOCK_FILE="$BACKUP_DIR/.last_backup_date"
-TODAY=$(date +'%F')
-USER_FILE="$BACKUP_DIR/.backup_user"
-PI_HOST="192.168.0.131"
-PI_USER="smerf"
+mkdir -p "$LOCK_DIR" "$LOG_DIR"
 
-# 1. Odczytaj nazwę użytkownika (kto) i upewnij się, że jest z małej litery
-if [ ! -f "$USER_FILE" ]; then
-  echo "BŁĄD: Brak pliku $USER_FILE! Uruchom ponownie setup."
-  exit 1
-fi
+# Funkcja logująca jednocześnie na ekran i do pliku
+log() {
+  local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $*"
+  echo "$msg"
+  echo "$msg" >> "$BACKUP_LOG"
+}
 
-if grep -q "=" "$USER_FILE"; then
-  # shellcheck source=/dev/null
-  source "$USER_FILE"
-else
-  KTO=$(cat "$USER_FILE" | tr -d '
- ')
-fi
-KTO=$(echo "$KTO" | tr '[:upper:]' '[:lower:]')
-KTO="${KTO,,}"
+log "================ START RUN_BACKUP ================"
 
-# 2. Jeśli dzisiaj backup już się wykonał - wyjdź natychmiast (oszczędność baterii)
-if [ "${1:-}" != "--force" ] && [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$TODAY" ]; then
+TODAY=$(date +'%Y-%m-%d')
+KTO="unknown"
+[ -f "$BACKUP_DIR/.user.conf" ] && source "$BACKUP_DIR/.user.conf"
+MONITOR_TOKEN=""
+[ -f "$BACKUP_DIR/.token.conf" ] && MONITOR_TOKEN=$(cat "$BACKUP_DIR/.token.conf" | tr -d '\r\n ')
+
+log "Użytkownik: $KTO"
+
+# 1. Test połączenia z Raspberry Pi
+log "1. Test połączenia SSH z Raspberry Pi (Host: pi)..."
+SSH_OUT=$(ssh -F "$BACKUP_DIR/.ssh.conf" -o ConnectTimeout=5 -o BatchMode=yes pi "echo SSH_CONNECTED" 2>&1)
+SSH_EXIT=$?
+
+if [ $SSH_EXIT -ne 0 ] || [ "$SSH_OUT" != "SSH_CONNECTED" ]; then
+  log "❌ BRAK POŁĄCZENIA Z PI (Kod błędu: $SSH_EXIT)"
+  log "Szczegóły błędu SSH: $SSH_OUT"
+  log "Upewnij się, że jesteś w domowej sieci Wi-Fi i Pi działa."
+  log "================ KONIEC (BRAK PI) ================"
   exit 0
 fi
+log "✅ Połączenie z Pi działa poprawnie."
 
-# 3. Sprawdź czy jesteśmy w domowym Wi-Fi (timeout 2s)
-if ! ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no "$PI_USER@$PI_HOST" "true" 2>/dev/null; then
-  exit 0
-fi
-
-# 4. Zablokuj uśpienie procesora telefonu na czas wykonywania zadań
+# 2. Blokada uśpienia Androida
 termux-wake-lock 2>/dev/null || true
 trap 'termux-wake-unlock 2>/dev/null || true' EXIT
 
-# 5. Auto-aktualizacja: pobierz indywidualne skrypty i configi z katalogu .skrypty na Raspberry Pi
-REMOTE_SCRIPTS="pi:/media/pi/elemele/$KTO/.skrypty"
-
-echo "Pobieram najnowsze skrypty z $REMOTE_SCRIPTS do $BACKUP_DIR..."
-rclone copy "$REMOTE_SCRIPTS" "$BACKUP_DIR" --fast-list -q 2>/dev/null || true
-
-# Jeśli na Pi w katalogu użytkownika jest dedykowany rclone.conf, zaktualizuj go
-if [ -f "$BACKUP_DIR/rclone.conf" ]; then
-  cp "$BACKUP_DIR/rclone.conf" "$HOME/.config/rclone/rclone.conf"
-  chmod 600 "$HOME/.config/rclone/rclone.conf"
-fi
-
+# 3. Pobieranie / aktualizacja skryptów z Pi
+log "2. Sprawdzanie skryptów w pi:/media/pi/elemele/$KTO/.skrypty ..."
+rclone copy "pi:/media/pi/elemele/$KTO/.skrypty" "$BACKUP_DIR" -v >> "$BACKUP_LOG" 2>&1 || true
 chmod +x "$BACKUP_DIR"/*.sh 2>/dev/null || true
 
-# 6. Uruchom alfabetycznie wszystkie zadania *.sh (np. 10_backup.sh, 20_inne.sh)
-ALL_SUCCESS=true
+# 4. Wykonywanie skryptów backupu
+ALL_OK=true
+FAILED_SCRIPTS=()
+FOUND_ANY=false
 
-for script in $(ls "$BACKUP_DIR"/*.sh 2>/dev/null | sort); do
+# Sprawdzamy czy wymuszamy uruchomienie (ręczne wywołanie z terminala (to nie -wyłączam ([ -t 1 ])  ) lub flaga -f)
+FORCE=false
+if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--force" ]; then
+  FORCE=true
+  log "Wymuszono uruchomienie (ignoruję blokady dzienne)."
+fi
+
+for script in "$BACKUP_DIR"/*.sh; do
   [ -f "$script" ] || continue
-  script_name=$(basename "$script")
-  # Pomijamy dyspozytora
-  [ "$script_name" = "run_backup.sh" ] && continue
+  sname=$(basename "$script")
+  [ "$sname" = "run_backup.sh" ] && continue
+  FOUND_ANY=true
 
-  echo "=========================================="
-  echo "Uruchamiam: $script_name dla $KTO"
-  echo "=========================================="
+  slock="$LOCK_DIR/$sname.done"
+  if [ "$FORCE" = false ] && [ -f "$slock" ] && [ "$(cat "$slock" 2>/dev/null)" = "$TODAY" ]; then
+    log "-> Pomijam $sname (już wykonany dzisiaj $TODAY)"
+    continue
+  fi
 
-  if ! bash "$script" "$@"; then
-    echo "[OSTRZEŻENIE] $script_name zgłosił błąd!"
-    ALL_SUCCESS=false
+  log "-> Uruchamiam: $sname ..."
+  if bash "$script" >> "$BACKUP_LOG" 2>&1; then
+    log "  [OK] $sname zakończony sukcesem."
+    echo "$TODAY" > "$slock"
+  else
+    log "  [BŁĄD] $sname zakończył się błędem!"
+    FAILED_SCRIPTS+=("$sname")
+    ALL_OK=false
   fi
 done
 
-# 7. Po sukcesie wszystkich zadań zapisz dzisiejszą datę (lock)
-if [ "$ALL_SUCCESS" = true ]; then
-  echo "$TODAY" > "$LOCK_FILE"
-  echo "Wszystkie zadania wykonane pomyślnie dla $KTO."
+if [ "$FOUND_ANY" = false ]; then
+  log "⚠️ Nie znaleziono żadnych dodatkowych skryptów *.sh w $BACKUP_DIR."
 fi
 
+# 5. Wysłanie meldunku do Django /monitoring/ z tokenem konta technicznego DRF
+MONITOR_URL="http://$(grep HostName "$BACKUP_DIR/.ssh.conf" | awk '{print $2}'):8000/monitoring/"
+
+if [ -n "$MONITOR_TOKEN" ]; then
+  log "3. Wysyłanie meldunku do serwera ($MONITOR_URL)..."
+  if [ "$ALL_OK" = true ]; then
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_URL" \
+      -H "Authorization: Token $MONITOR_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"status_code": 0, "summary": "Wszystkie skrypty OK"}' || echo "FAIL")
+    log "Odpowiedź serwera: HTTP $HTTP_CODE"
+    termux-notification --title "Backup OK ($KTO)" --content "Zakończono pomyślnie." --id 999 2>/dev/null || true
+  else
+    FLIST="${FAILED_SCRIPTS[*]}"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_URL" \
+      -H "Authorization: Token $MONITOR_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"status_code\": 2, \"error\": \"Błąd skryptów: $FLIST\"}" || echo "FAIL")
+    log "Odpowiedź serwera: HTTP $HTTP_CODE"
+    termux-notification --title "Błąd backupu ($KTO)" --content "Zawiodły: $FLIST" --id 999 2>/dev/null || true
+  fi
+else
+  log "⚠️ Brak tokena w $BACKUP_DIR/.token.conf - pomijam raport do monitoringu."
+fi
+
+log "================ KONIEC RUN_BACKUP ================"

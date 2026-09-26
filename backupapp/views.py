@@ -1,40 +1,40 @@
+# ==============================================================================
+# backupapp/views.py
+# Aplikacja: BACKUPAPP
+# Onboarding telefonów z użyciem Tokenu konta maszynowego DRF
+# ==============================================================================
+from pathlib import Path
+from django.shortcuts import render, get_object_or_404, redirect
+from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
+from django.conf import settings
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
-from django.http import HttpResponse, JsonResponse
-from django.shortcuts import render, get_object_or_404
-from django.urls import reverse
-from django.utils import timezone
-from django.conf import settings
-from pathlib import Path
 
-from .models import BackupInvitation, BackupAgent
+from .models import BackupInvitation
 
-# Ścieżki na serwerze Django do plików konfiguracyjnych
+try:
+    from monitoring.models import MonitoredService, LogEntry
+except ImportError:
+    MonitoredService = None
+    LogEntry = None
+
 SCRIPT_DIR = getattr(settings, 'BASE_DIR', Path('.')) / "backupapp" / "scripts"
 SCRIPT_PATH = SCRIPT_DIR / "10_backup.sh"
 RCLONE_CONF_PATH = SCRIPT_DIR / "rclone.conf"
-SCRIPT_VERSION = "2026-09-22 14:00"
+SCRIPT_VERSION = "2026-09-26 12:00"
 
 
-# ==============================================================================
-# 1. Endpoint INFO – wersja i URL do pobrania
-# ==============================================================================
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def backup_script_info(request):
     script_url = request.build_absolute_uri(reverse('backup-core'))
-    return JsonResponse({
-        "latest_version": SCRIPT_VERSION,
-        "script_url": script_url
-    })
+    return JsonResponse({"latest_version": SCRIPT_VERSION, "script_url": script_url})
 
 
-# ==============================================================================
-# 2. Endpoint pobierania skryptu backupu
-# ==============================================================================
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -47,13 +47,8 @@ def get_backup_script(request):
         return response
     except FileNotFoundError:
         return HttpResponse("Script not found", status=404)
-    except Exception as e:
-        return HttpResponse(f"Server error: {str(e)}", status=500)
 
 
-# ==============================================================================
-# 3. Endpoint pobierania konfiguracji Rclone
-# ==============================================================================
 def get_rclone_conf(request):
     try:
         with open(RCLONE_CONF_PATH, 'r', encoding='utf-8') as f:
@@ -63,283 +58,297 @@ def get_rclone_conf(request):
         return response
     except FileNotFoundError:
         return HttpResponse("rclone.conf not found", status=404)
-    except Exception as e:
-        return HttpResponse(f"Server error: {str(e)}", status=500)
 
-
-# ==============================================================================
-# 4. Bezpośrednia instalacja (curl -sL https://.../setup/<token>/ | bash LUB przeglądarka)
-# ==============================================================================
 def setup_phone(request, token):
     """
-    Jeśli wywołane z curl/wget w Termuxie: zwraca czysty skrypt bash.
-    Jeśli otwarte w przeglądarce telefonu: wyświetla minimalistyczną stronę z 1 przyciskiem kopiowania.
-    Wyszukiwanie bezpośrednio po Tokenie autoryzacyjnym użytkownika.
+    Wydaje instalator dla telefonu:
+    Token należy do konta technicznego (np. svc_maciek_backup).
     """
-    token_obj = get_object_or_404(Token, key=token)
-    user = token_obj.user
-    # Nazwy użytkowników konsekwentnie z małej litery (np. maciek, krysia, asia, zuzia)
+    invitation = BackupInvitation.objects.filter(token_link=token).first()
+    
+    if not invitation:
+        token_obj = get_object_or_404(Token, key=token)
+        invitation = BackupInvitation.objects.filter(token_link=token_obj.key).first()
+        if not invitation:
+            invitation = BackupInvitation.objects.create(
+                user=token_obj.user,
+                token_link=token_obj.key,
+                is_used=False
+            )
+
+    user = invitation.user
     username = user.username.lower()
 
-    # Zapewnienie istnienia rekordu statusu zaproszenia
-    invitation, _ = BackupInvitation.objects.get_or_create(
-        user=user,
-        defaults={'token_link': token}
-    )
+    if invitation.is_used:
+        user_agent = request.headers.get('User-Agent', '').lower()
+        if 'curl' in user_agent or 'wget' in user_agent or request.GET.get('raw'):
+            return HttpResponse(
+                f'echo "BŁĄD: Zaproszenie dla {username} zostało już wykorzystane!"\nexit 1\n',
+                content_type='text/plain; charset=utf-8',
+                status=410
+            )
+        return render(request, 'setup.html', {'user': user, 'is_used': True}, status=410)
 
-    server_ip = '192.168.0.131'
-    ssh_user = 'smerf'
+    # Zamiast zgadywać z request.get_host():
+    server_ip = getattr(settings, 'BACKUP_PI_HOST', '192.168.0.131')
+    ssh_user = getattr(settings, 'BACKUP_PI_USER', 'smerf') 
     status_url = request.build_absolute_uri(reverse('claim_invitation', args=[token]))
     script_url = request.build_absolute_uri(reverse('setup_phone', args=[token]))
+    monitor_url = request.build_absolute_uri('/monitoring/')
 
-    # Czysty skrypt instalacyjny generowany w locie
-    bash_script = f"""#!/data/data/com.termux/files/usr/bin/bash
+    bash_template = """#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
-
-echo "=========================================================="
-echo "  Instalacja backupu telefonu dla: {username}"
-echo "=========================================================="
-
-echo "[1/6] Sprawdzanie i instalacja pakietów w Termuxie..."
+echo "=== Instalacja backupu telefonu dla: __USERNAME__ ==="
 export DEBIAN_FRONTEND=noninteractive
 pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl </dev/null
-
-echo "[2/6] Dostęp do pamięci Androida..."
-if [ -d "$HOME/storage" ] && [ -d "$HOME/storage/shared" ]; then
-  echo "-> Uprawnienia do pamięci telefonu są już aktywne ($HOME/storage istnieje)."
-else
-  echo "-> Wywoływanie uprawnień do pamięci..."
-  termux-setup-storage </dev/null 2>/dev/null || true
-  echo "-> Jeśli na ekranie telefonu pojawiło się okienko Androida, kliknij 'Zezwól'."
-  echo "-> Czekam 5 sekund na zatwierdzenie uprawnień w systemie..."
-  sleep 5
-fi
-
-# Wykrywanie karty SD (3 niezawodne metody bez potrzeby uprawnień root)
-SD_DETECTED=""
-if [ -f /proc/mounts ]; then
-  SD_DETECTED=$(grep -oE '/storage/[0-9A-Za-z_-]+' /proc/mounts 2>/dev/null | grep -vE '/storage/(emulated|self)' | head -n1 || true)
-fi
-if [ -z "$SD_DETECTED" ]; then
-  SD_DETECTED=$(df 2>/dev/null | grep -oE '/storage/[0-9A-Za-z_-]+' | grep -vE '/storage/(emulated|self)' | head -n1 || true)
-fi
-if [ -z "$SD_DETECTED" ] && [ -e "$HOME/storage/external-1" ]; then
-  EXT_TARGET=$(readlink -f "$HOME/storage/external-1" 2>/dev/null || true)
-  SD_DETECTED=$(echo "$EXT_TARGET" | grep -oE '/storage/[^/]+' | grep -vE '/storage/(emulated|self)' | head -n1 || true)
-fi
-
-SD_CARD=""
-if [ -n "$SD_DETECTED" ]; then
-  SD_CARD=$(basename "$SD_DETECTED")
-  echo "-> Wykryto kartę SD: $SD_CARD (/storage/$SD_CARD)"
-else
-  echo "-> Brak dodatkowej karty SD (tylko pamięć główna)."
-fi
-
-echo "[3/6] Konfiguracja klucza SSH..."
+termux-setup-storage </dev/null 2>/dev/null || true
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
-if [ ! -f ~/.ssh/id_ed25519 ]; then
-  ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
-fi
+[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
 chmod 600 ~/.ssh/id_ed25519
 
-# Wpis w ~/.ssh/config dla 'pi'
-if grep -q "Host pi" ~/.ssh/config 2>/dev/null; then
-  sed -i '/Host pi/,/StrictHostKeyChecking/d' ~/.ssh/config 2>/dev/null || true
-fi
-
-cat >> ~/.ssh/config << 'SSHEOF'
-
+cat > ~/.ssh/config << 'SSHEOF'
 Host pi
-    User {ssh_user}
-    HostName {server_ip}
+    HostName __SERVER_IP__
+    User __SSH_USER__
     Port 22
     IdentityFile ~/.ssh/id_ed25519
     StrictHostKeyChecking no
 SSHEOF
 chmod 600 ~/.ssh/config
 
-echo "-> Podaj JEDNORAZOWO hasło do Raspberry Pi ({ssh_user}@{server_ip}):"
-ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip} < /dev/tty || ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip}
+echo "-> Autoryzacja SSH na Raspberry Pi (__SSH_USER__@__SERVER_IP__):"
+ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub __SSH_USER__@__SERVER_IP__ < /dev/tty || true
+ssh -F ~/.ssh/config pi "mkdir -p '/media/pi/elemele/__USERNAME__/_backup_tel_sync' '/media/pi/elemele/__USERNAME__/.skrypty' '/media/pi/elemele/__USERNAME__/logs'" < /dev/null 2>/dev/null || true
 
-# Tworzenie katalogów na Pi dla tego użytkownika (z małej litery)
-ssh {ssh_user}@{server_ip} "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty'" < /dev/null
-
-echo "[4/6] Tworzenie głównego katalogu ~/backup na telefonie i konfiguracja..."
 BACKUP_DIR="$HOME/backup"
 mkdir -p "$BACKUP_DIR" ~/.config/rclone
-cd "$BACKUP_DIR"
+cp ~/.ssh/config "$BACKUP_DIR/.ssh.conf"
+chmod 600 "$BACKUP_DIR/.ssh.conf"
 
-cat > "$BACKUP_DIR/.backup_user" << USREOF
-KTO="{username}"
-SD_CARD="$SD_CARD"
-PI_USER="{ssh_user}"
+cat > "$BACKUP_DIR/.user.conf" << USREOF
+KTO="__USERNAME__"
+PI_USER="__SSH_USER__"
 DEST_BASE="/media/pi/elemele"
 USREOF
 
-echo '{token}' > "$BACKUP_DIR/.backup_token"
+echo '__TOKEN__' > "$BACKUP_DIR/.token.conf"
 
 cat > ~/.config/rclone/rclone.conf << 'EOF'
 [pi]
 type = sftp
-host = {server_ip}
-user = {ssh_user}
+host = __SERVER_IP__
+user = __SSH_USER__
 port = 22
 key_file = ~/.ssh/id_ed25519
 shell_type = unix
 EOF
 chmod 600 ~/.config/rclone/rclone.conf
+cp ~/.config/rclone/rclone.conf "$BACKUP_DIR/.rclone.conf"
+chmod 600 "$BACKUP_DIR/.rclone.conf"
 
-# Filtry wykluczające cache, miniatury i zbędne pliki
-cat > "$BACKUP_DIR/.rclone-filters.txt" << 'EOF'
+cat > "$BACKUP_DIR/.rclone-filters.conf" << 'EOF'
 + /DCIM/**
 + /Pictures/**
 + /Documents/**
 + /Download/**
-+ /Music/**
-+ /Android/media/**
 - **.tmp
-- **.swp
-- **.bak
-- **.nomedia
 - **.thumbnails/**
-- **Cache/**
 - **cache/**
-- **Thumbs.db
-- **.DS_Store
 - *
 EOF
 
-echo "[5/6] Instalacja dyspozytora $BACKUP_DIR/run_backup.sh..."
-cat > "$BACKUP_DIR/run_backup.sh" << 'EOF'
+cat > "$BACKUP_DIR/run_backup.sh" << 'RUNNER_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -u
 
 BACKUP_DIR="$HOME/backup"
-cd "$BACKUP_DIR"
+LOCK_DIR="$BACKUP_DIR/.locks"
+LOG_DIR="$BACKUP_DIR/logs"
+BACKUP_LOG="$LOG_DIR/backup.log"
+MONITOR_URL="https://host109829.xce.pl/api/monitoring/"
 
-LOCK_FILE="$BACKUP_DIR/.last_backup_date"
-TODAY=$(date +'%F')
-USER_FILE="$BACKUP_DIR/.backup_user"
+mkdir -p "$LOCK_DIR" "$LOG_DIR"
 
-# 1. Odczytaj nazwę użytkownika (kto) i upewnij się, że jest z małej litery
-if [ ! -f "$USER_FILE" ]; then
-  echo "Brak pliku $USER_FILE!"
-  exit 1
-fi
-if grep -q "=" "$USER_FILE"; then
-  # shellcheck source=/dev/null
-  source "$USER_FILE"
-else
-  KTO=$(cat "$USER_FILE" | tr -d '
- ')
-fi
-KTO=$(echo "$KTO" | tr '[:upper:]' '[:lower:]')
+log() {
+  local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $*"
+  echo "$msg"
+  echo "$msg" >> "$BACKUP_LOG"
+}
 
-# 2. Blokada dzienna (jeśli dzisiaj backup już się wykonał - wyjdź natychmiast)
-if [ "${{1:-}}" != "--force" ] && [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$TODAY" ]; then
+log "================ START RUN_BACKUP ================"
+
+TODAY=$(date +'%Y-%m-%d')
+KTO="unknown"
+[ -f "$BACKUP_DIR/.user.conf" ] && source "$BACKUP_DIR/.user.conf"
+MONITOR_TOKEN=""
+[ -f "$BACKUP_DIR/.token.conf" ] && MONITOR_TOKEN=$(cat "$BACKUP_DIR/.token.conf" | tr -d '\r\n ')
+
+log "Użytkownik: $KTO"
+
+# 1. Test połączenia SSH z Raspberry Pi
+log "1. Test połączenia SSH z Raspberry Pi (Host: pi)..."
+SSH_OUT=$(ssh -F "$BACKUP_DIR/.ssh.conf" -o ConnectTimeout=5 -o BatchMode=yes pi "echo SSH_CONNECTED" 2>&1)
+SSH_EXIT=$?
+
+if [ $SSH_EXIT -ne 0 ] || [ "$SSH_OUT" != "SSH_CONNECTED" ]; then
+  log "❌ BRAK POŁĄCZENIA Z PI (Kod błędu SSH: $SSH_EXIT)"
+  log "Szczegóły błędu SSH: $SSH_OUT"
+  log "Upewnij się, że jesteś w domowej sieci Wi-Fi i Pi działa."
+  log "================ KONIEC (BRAK PI) ================"
   exit 0
 fi
-
-# 3. Sprawdź obecność w domowym Wi-Fi (timeout 2s)
-if ! ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no {ssh_user}@{server_ip} "true" 2>/dev/null; then
-  exit 0
-fi
+log "✅ Połączenie z Pi działa poprawnie."
 
 termux-wake-lock 2>/dev/null || true
 trap 'termux-wake-unlock 2>/dev/null || true' EXIT
 
-# 4. Synchronizacja indywidualnego katalogu .skrypty dla tego użytkownika z Raspberry Pi
-REMOTE_PATH="pi:/media/pi/elemele/$KTO/.skrypty"
-
-rclone copy "$REMOTE_PATH" "$BACKUP_DIR" --fast-list -q 2>/dev/null || true
-
-# Jeśli w .skrypty na Pi znajduje się zaktualizowany rclone.conf, zaktualizuj go na telefonie
-if [ -f "$BACKUP_DIR/rclone.conf" ]; then
-  cp "$BACKUP_DIR/rclone.conf" "$HOME/.config/rclone/rclone.conf"
-  chmod 600 "$HOME/.config/rclone/rclone.conf"
-fi
-
+# 2. Synchronizacja skryptów z Pi
+log "2. Sprawdzanie skryptów w pi:/media/pi/elemele/$KTO/.skrypty ..."
+rclone copy "pi:/media/pi/elemele/$KTO/.skrypty" "$BACKUP_DIR" -v >> "$BACKUP_LOG" 2>&1 || true
 chmod +x "$BACKUP_DIR"/*.sh 2>/dev/null || true
 
-# 5. Uruchomienie alfabetycznie wszystkich zadań *.sh (np. 10_backup.sh)
 ALL_OK=true
-for script in $(ls "$BACKUP_DIR"/*.sh 2>/dev/null | sort); do
-  [ -f "$script" ] || continue
-  # Pomijamy samego runnera
-  [ "$(basename "$script")" = "run_backup.sh" ] && continue
+FAILED_SCRIPTS=()
+FOUND_ANY=false
 
-  if ! bash "$script" "$@"; then
+FORCE=false
+if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--force" ]; then
+  FORCE=true
+  log "Wymuszono uruchomienie (ignoruję blokady dzienne)."
+fi
+
+for script in "$BACKUP_DIR"/*.sh; do
+  [ -f "$script" ] || continue
+  sname=$(basename "$script")
+  [ "$sname" = "run_backup.sh" ] && continue
+  FOUND_ANY=true
+
+  slock="$LOCK_DIR/$sname.done"
+  if [ "$FORCE" = false ] && [ -f "$slock" ] && [ "$(cat "$slock" 2>/dev/null)" = "$TODAY" ]; then
+    log "-> Pomijam $sname (już wykonany dzisiaj $TODAY)"
+    continue
+  fi
+
+  log "-> Uruchamiam: $sname ..."
+  if bash "$script" >> "$BACKUP_LOG" 2>&1; then
+    log "  [OK] $sname zakończony sukcesem."
+    echo "$TODAY" > "$slock"
+  else
+    log "  [BŁĄD] $sname zakończył się błędem!"
+    FAILED_SCRIPTS+=("$sname")
     ALL_OK=false
   fi
 done
 
-if [ "$ALL_OK" = true ]; then
-  echo "$TODAY" > "$LOCK_FILE"
+if [ "$FOUND_ANY" = false ]; then
+  log "⚠️ Nie znaleziono żadnych dodatkowych skryptów *.sh w $BACKUP_DIR."
 fi
-EOF
+
+# 3. Meldunek do DRF /monitoring/ z Tokenem Konta Maszynowego
+if [ -n "$MONITOR_TOKEN" ]; then
+  log "3. Wysyłanie meldunku do serwera (__MONITOR_URL__)..."
+  if [ "$ALL_OK" = true ]; then
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "__MONITOR_URL__" \
+      -H "Authorization: Token $MONITOR_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"status_code": 0, "summary": "Wszystkie skrypty OK"}' || echo "FAIL")
+    log "Odpowiedź serwera: HTTP $HTTP_CODE"
+    termux-notification --title "Backup OK ($KTO)" --content "Zakończono pomyślnie." --id 999 2>/dev/null || true
+  else
+    FLIST="${FAILED_SCRIPTS[*]}"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "__MONITOR_URL__" \
+      -H "Authorization: Token $MONITOR_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"status_code\": 2, \"error\": \"Błąd skryptów: $FLIST\"}" || echo "FAIL")
+    log "Odpowiedź serwera: HTTP $HTTP_CODE"
+    termux-notification --title "Błąd backupu ($KTO)" --content "Zawiodły: $FLIST" --id 999 2>/dev/null || true
+  fi
+else
+  log "⚠️ Brak tokena w $BACKUP_DIR/.token.conf - pomijam raport do monitoringu."
+fi
+
+log "================ KONIEC RUN_BACKUP ================"
+RUNNER_EOF
 chmod +x "$BACKUP_DIR/run_backup.sh"
 
-# Pierwsza synchronizacja z dedykowanego katalogu użytkownika na Pi
-rclone copy "pi:/media/pi/elemele/{username}/.skrypty" "$BACKUP_DIR" -q 2>/dev/null || true
-if [ -f "$BACKUP_DIR/rclone.conf" ]; then
-  cp "$BACKUP_DIR/rclone.conf" ~/.config/rclone/rclone.conf
-  chmod 600 ~/.config/rclone/rclone.conf
-fi
-chmod +x "$BACKUP_DIR"/*.sh 2>/dev/null || true
-
-echo "[6/6] Ustawianie automatycznego harmonogramu (co 1h na Wi-Fi)..."
 termux-job-scheduler --cancel --job-id 101 2>/dev/null || true
-termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period 3600000 --network unmetered --persisted true
-
-# Oznaczenie tokenu jako skonfigurowany
-curl -s "{status_url}" > /dev/null 2>&1 || true
-
-# Posprzątanie tymczasowego instalatora
+termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period 3600000 --network unmetered --persisted true 2>/dev/null || true
+curl -s "__STATUS_URL__" >/dev/null 2>&1 || true
 rm -f "$HOME/setup.sh" 2>/dev/null || true
-
-echo ""
-echo "=========================================================="
-echo "  GOTOWE! Backup dla {username} skonfigurowany w ~/backup."
-echo "=========================================================="
+echo "=== GOTOWE! Backup dla __USERNAME__ skonfigurowany. ==="
 """
 
-    # Jeśli wywołanie pochodzi z curl lub wget w Termuxie:
+    bash_script = (
+        bash_template
+        .replace("__USERNAME__", username)
+        .replace("__SERVER_IP__", server_ip)
+        .replace("__SSH_USER__", ssh_user)
+        .replace("__TOKEN__", token)
+        .replace("__MONITOR_URL__", monitor_url)
+        .replace("__STATUS_URL__", status_url)
+    )
+
     user_agent = request.headers.get('User-Agent', '').lower()
     if 'curl' in user_agent or 'wget' in user_agent or request.GET.get('raw'):
         return HttpResponse(bash_script, content_type='text/plain; charset=utf-8')
 
-    # Jeśli otwarto w przeglądarce telefonu:
     one_liner = f"curl -sL {script_url} -o ~/setup.sh && bash ~/setup.sh"
-    return render(request, 'setup.html', {
-        'user': user,
-        'token': token,
-        'one_liner': one_liner,
-        'direct_url': script_url,
-    })
+    return render(request, 'setup.html', {'user': user, 'token': token, 'one_liner': one_liner, 'direct_url': script_url})
+
+def claim_invitation(request, token):
+    invitation = BackupInvitation.objects.filter(token_link=token).first()
+    if not invitation:
+        token_obj = Token.objects.filter(key=token).first()
+        if token_obj:
+            invitation = BackupInvitation.objects.filter(token_link=token_obj.key).first()
+
+    if invitation:
+        invitation.is_used = True
+        invitation.save(update_fields=['is_used'])
+
+    if request.GET.get('redirect') or ('text/html' in request.headers.get('Accept', '')):
+        return redirect('backup_dashboard')
+
+    return HttpResponse("OK")
 
 
-# ==============================================================================
-# 5. Panel Dashboardu Onboardingu (TYLKO aktywne zaproszenia do wykorzystania)
-# ==============================================================================
 def backup_dashboard(request):
     """
-    Wyświetla TYLKO aktywne (jeszcze nieużyte) zaproszenia do instalacji backupu.
-    Gdy wszystkie telefony zostaną skonfigurowane (is_used=True), lista jest pusta!
+    Pulpit domowników:
+    Prezentuje listę zaproszeń oraz stan usług pobrany z MonitoredService.
     """
     active_invites = BackupInvitation.objects.filter(is_used=False).select_related('user').order_by('user__username')
+    services_data = []
+
+    if MonitoredService:
+        services = MonitoredService.objects.select_related('user', 'service_user').all().order_by('user__username', 'service_name')
+        for s in services:
+            latest_log = s.logs.order_by('-checked_at').first()
+            log_msg = ""
+            if latest_log and isinstance(latest_log.message, dict):
+                log_msg = latest_log.message.get('log') or latest_log.message.get('summary') or latest_log.message.get('error') or str(latest_log.message)
+            elif latest_log:
+                log_msg = str(latest_log.message)
+
+            services_data.append({
+                'service': s,
+                'user': s.user,
+                'service_user': s.service_user,
+                'status_code': latest_log.status_code if latest_log else s.last_status,
+                'status_display': s.status_display,
+                'last_check_at': s.last_check_at,
+                'latest_log': latest_log,
+                'log_content': log_msg,
+                'is_healthy': s.is_healthy,
+            })
 
     display_data = []
-
     for invite in active_invites:
-        token_obj, _ = Token.objects.get_or_create(user=invite.user)
         user_name = invite.user.username.lower()
-        token_key = token_obj.key
-
+        token_key = invite.token_link
         setup_url = request.build_absolute_uri(reverse('setup_phone', args=[token_key]))
         claim_url = request.build_absolute_uri(reverse('claim_invitation', args=[token_key]))
         one_liner = f"curl -sL {setup_url} -o ~/setup.sh && bash ~/setup.sh"
-
         display_data.append({
             'user': user_name,
             'token': token_key,
@@ -352,54 +361,6 @@ def backup_dashboard(request):
     return render(request, 'backup_dashboard.html', {
         'invitations': display_data,
         'has_active': len(display_data) > 0,
+        'services': services_data,
     })
-
-
-# ==============================================================================
-# 5. Oznaczenie zaproszenia jako zużyte
-# ==============================================================================
-def claim_invitation(request, token):
-    """
-    Oznacza zaproszenie jako zużyte (is_used=True).
-    Może być wywołane:
-    1. Automatycznie przez skrypt bash w Termuxie na końcu instalacji.
-    2. Ręcznie przez administratora jednym kliknięciem z Dashboardu (odświeża stronę).
-    """
-    token_obj = get_object_or_404(Token, key=token)
-    invitation = BackupInvitation.objects.filter(user=token_obj.user).first()
-    if invitation:
-        invitation.is_used = True
-        invitation.save()
-
-    # Jeśli kliknięto w przeglądarce, przekieruj z powrotem na Dashboard
-    if request.GET.get('redirect') or ('text/html' in request.headers.get('Accept', '')):
-        from django.shortcuts import redirect
-        return redirect('backup_dashboard')
-
-    return HttpResponse("OK")
-
-
-# ==============================================================================
-# 6. API Raportowania / Monitoring
-# ==============================================================================
-@api_view(['POST'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
-def backup_report(request):
-    user = request.user
-    status_code = request.data.get("status_code", 0)
-    message = request.data.get("message", {})
-
-    agent, _ = BackupAgent.objects.get_or_create(user=user)
-    agent.last_seen = timezone.now()
-    agent.last_status_code = status_code
-
-    if isinstance(message, dict) and "error" in message:
-        agent.log = f"[{timezone.now().strftime('%Y-%m-%d %H:%M:%S')}] BŁĄD: {message['error']}"
-    else:
-        agent.log = f"[{timezone.now().strftime('%Y-%m-%d %H:%M:%S')}] Sukces (status 0)"
-
-    agent.save()
-
-    return JsonResponse({"status": "ok"})
 
