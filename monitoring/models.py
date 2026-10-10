@@ -25,8 +25,6 @@ def get_default_owner():
     return first_user.id if first_user else 1
 
 
-
-
 class MonitoredService(models.Model):
     """
     Konto maszynowe (Service Account) w standardzie DRF.
@@ -42,7 +40,7 @@ class MonitoredService(models.Model):
     }
 
     # Człowiek (opiekun / użytkownik nadrzędny, domyślnie maciek)
-    user = models.ForeignKey(
+    owner = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         default=get_default_owner,
@@ -50,11 +48,12 @@ class MonitoredService(models.Model):
         verbose_name="Opiekun (użytkownik nadrzędny)"
     )
 
-    # Konto techniczne maszyny w DRF
+    # Konto techniczne maszyny w DRF (null=True, blank=True pozwala na bezpieczne migracje istniejących rekordów)
     service_user = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
-        default=get_default_owner,
+        null=True,
+        blank=True,
         related_name='service_profile',
         verbose_name="Konto techniczne maszyny (DRF User)"
     )
@@ -79,14 +78,18 @@ class MonitoredService(models.Model):
     class Meta:
         verbose_name = "Usługa monitoringu (Service Account)"
         verbose_name_plural = "Usługi monitoringu (Service Accounts)"
-        unique_together = ('user', 'service_name')
+        unique_together = ('owner', 'service_name')
 
     def __str__(self):
-        return f"{self.service_name} [{self.service_user.username}] -> nadzorca: {self.user.username}"
+        owner_name = getattr(self.owner, 'username', 'brak')
+        svc_name = getattr(self.service_user, 'username', 'tworzenie...')
+        return f"{self.service_name} [{svc_name}] -> nadzorca: {owner_name}"
 
     @property
     def token(self):
         """Zwraca oficjalny token DRF przypisany do konta technicznego tego urządzenia."""
+        if not self.service_user:
+            return ""
         token_obj, _ = Token.objects.get_or_create(user=self.service_user)
         return token_obj.key
 

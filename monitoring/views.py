@@ -34,7 +34,7 @@ class MonitoringReceiverView(APIView):
 
         # 1. Sprawdź czy konto techniczne ma profil MonitoredService
         try:
-            service = MonitoredService.objects.select_related('user').get(
+            service = MonitoredService.objects.select_related('owner').get(
                 service_user=service_user,
                 is_active=True
             )
@@ -83,7 +83,7 @@ class MonitoringReceiverView(APIView):
         return Response({
             "status": "ok",
             "service": service.service_name,
-            "owner": service.user.username,
+            "owner": service.owner.username,
             "machine_account": service_user.username,
             "status_code": status_code,
             "checked_at": log_entry.checked_at.isoformat()
