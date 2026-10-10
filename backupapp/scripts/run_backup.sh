@@ -146,16 +146,8 @@ done
 
 END_TIMESTAMP=$(date +'%F %T')
 
-# 7. Synchronizacja zwrotna: Przerzucenie logów z telefonu na Raspberry Pi
-DEST_LOGS_REMOTE="pi:/media/pi/elemele/$KTO/logs"
-echo "[$END_TIMESTAMP] [RUNNER] Przesyłam logi na Raspberry Pi ($DEST_LOGS_REMOTE)..." >> "$BACKUP_LOG"
-rclone copy "$LOG_DIR" "$DEST_LOGS_REMOTE" --fast-list -q 2>/dev/null || true
-
-# 8. Bezpieczne przygotowanie wyciągu z logu bez błędów sed
-LOG_PAYLOAD=$(tail -n 25 "$BACKUP_LOG" 2>/dev/null | tr '
-' ' ' | tr '"' "'" | tr '\' '/' || true)
-
-# 9. Obsługa wyników i raportowanie (Django API, Raspberry Pi log, Termux notification)
+# 7. Obsługa wyników i raportowanie (Django API DRF)
+# NAJPIERW pukamy do monitoringu i zapisujemy kod odpowiedzi HTTP do backup.log!
 if [ "$ALL_SUCCESS" = true ]; then
   echo "$TODAY" > "$LOCK_FILE"
   echo "[$END_TIMESTAMP] [RUNNER] Wszystkie zadania dla $KTO zakończone sukcesem." >> "$BACKUP_LOG"
@@ -163,10 +155,10 @@ if [ "$ALL_SUCCESS" = true ]; then
   # Zapis w historii na Raspberry Pi przez profil pi w .ssh.conf
   ssh -F "$SSH_CONFIG" -o ConnectTimeout=3 -o BatchMode=yes pi     "echo '[$END_TIMESTAMP] [OK] $KTO (wszystkie skrypty OK)' >> '/media/pi/elemele/backup_telefony.log'" 2>/dev/null || true
 
-  # Raport do aplikacji monitoring (/monitoring/ DRF APIView)
+  # Raport do aplikacji monitoring (/api/monitoring/)
   if [ -n "$MONITOR_TOKEN" ]; then
     echo "[$END_TIMESTAMP] [RUNNER] Wysyłam meldunek do $MONITOR_SERVER..." >> "$BACKUP_LOG"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_SERVER"       -H "Authorization: Token $MONITOR_TOKEN"       -H "Content-Type: application/json"       -d "{"status_code": 0, "summary": "Wszystkie skrypty OK", "log": "$LOG_PAYLOAD"}" || echo "FAIL")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_SERVER"       -H "Authorization: Token $MONITOR_TOKEN"       -H "Content-Type: application/json"       -d '{"status_code": 0, "summary": "Wszystkie skrypty OK"}' || echo "FAIL")
     echo "[$END_TIMESTAMP] [RUNNER] Odpowiedź serwera monitoringu: HTTP $HTTP_CODE" >> "$BACKUP_LOG"
   fi
 
@@ -175,17 +167,20 @@ else
   FAILED_LIST="${FAILED_SCRIPTS[*]}"
   echo "[$END_TIMESTAMP] [RUNNER] UWAGA! Następujące skrypty zawiodły: $FAILED_LIST" >> "$BACKUP_LOG"
 
-  # Zapis błędu w historii na Raspberry Pi z DOKŁADNĄ nazwą skryptu przez .ssh.conf
   ssh -F "$SSH_CONFIG" -o ConnectTimeout=3 -o BatchMode=yes pi     "echo '[$END_TIMESTAMP] [BŁĄD] $KTO: wysypał się skrypt: $FAILED_LIST' >> '/media/pi/elemele/backup_telefony.log'" 2>/dev/null || true
 
   # Raport o błędzie (status_code 2: critical) do aplikacji monitoring
   if [ -n "$MONITOR_TOKEN" ]; then
     echo "[$END_TIMESTAMP] [RUNNER] Wysyłam meldunek o błędzie do $MONITOR_SERVER..." >> "$BACKUP_LOG"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_SERVER"       -H "Authorization: Token $MONITOR_TOKEN"       -H "Content-Type: application/json"       -d "{"status_code": 2, "error": "Wysypał się skrypt: $FAILED_LIST", "log": "$LOG_PAYLOAD"}" || echo "FAIL")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$MONITOR_SERVER"       -H "Authorization: Token $MONITOR_TOKEN"       -H "Content-Type: application/json"       -d "{"status_code": 2, "error": "Wysypał się skrypt: $FAILED_LIST"}" || echo "FAIL")
     echo "[$END_TIMESTAMP] [RUNNER] Odpowiedź serwera monitoringu: HTTP $HTTP_CODE" >> "$BACKUP_LOG"
   fi
 
-  # Wyraźne powiadomienie na telefonie z nazwą skryptu
   termux-notification --title "Błąd backupu ($KTO)"     --content "Wysypał się skrypt: $FAILED_LIST. Zobacz ~/backup/logs/backup.log"     --priority high --id 999 2>/dev/null || true
 fi
+
+# 8. Synchronizacja zwrotna: DOPIERO TERAZ wysyłamy kompletny backup.log (wraz z odpowiedzią HTTP) na Pi!
+DEST_LOGS_REMOTE="pi:/media/pi/elemele/$KTO/logs"
+echo "[$END_TIMESTAMP] [RUNNER] Przesyłam logi na Raspberry Pi ($DEST_LOGS_REMOTE)..." >> "$BACKUP_LOG"
+rclone copy "$LOG_DIR" "$DEST_LOGS_REMOTE" --fast-list -q 2>/dev/null || true
 
