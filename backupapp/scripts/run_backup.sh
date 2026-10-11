@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # BACKUP_SINGLE_TASK_V1
 # Jeden skrypt = jedno zadanie: kopia telefonu (i opcjonalnie karty SD).
-# Kolejność: blokada -> zaległe raporty -> Pi -> aktualizacja -> backup -> raport.
+# Kolejność: blokada -> zaległe raporty -> kontrola dnia -> Pi -> aktualizacja -> backup -> raport.
 # Harmonogram uruchamia ten plik; udana kopia jest wykonywana raz dziennie.
 # Opcja --force (lub -f) pozwala ponowić kopię tego samego dnia.
 # Nie uruchamiamy innych plików .sh. exec bash poniżej uruchamia wyłącznie
@@ -119,12 +119,16 @@ queue_report() {
   printf '%s\n' "$payload" > "$temporary" && mv "$temporary" "$report"
 }
 
-# --- 5. Ponowienie raportów i odczyt konfiguracji telefonu ---
+# --- 5. Ponowienie raportów i kontrola dziennego wykonania ---
 DELIVERY_FAILED=0
 send_pending || DELIVERY_FAILED=1
 FORCE=false
 if [ "${1:-}" = '--force' ] || [ "${1:-}" = '-f' ]; then FORCE=true; fi
+if [ "$FORCE" = false ] && [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE")" = "$TODAY" ]; then
+  exit "$DELIVERY_FAILED"
+fi
 
+# --- 6. Odczyt konfiguracji telefonu ---
 KTO=unknown
 if [ ! -f "$BACKUP_DIR/.user.conf" ]; then
   add_failure 'configuration' 1 'Brak .user.conf'
@@ -140,7 +144,7 @@ if [ "$ALL_SUCCESS" = false ]; then
   exit 1
 fi
 
-# --- 6. Konfiguracja połączeń ---
+# --- 7. Konfiguracja połączeń ---
 # Zachowujemy zgodność ze starszymi instalacjami: wbudowane SFTP rclone,
 # bez zewnętrznego ssh i bez sprawdzania klucza hosta (ustalenie dla tego backupu).
 unset RCLONE_SFTP_SSH
@@ -177,7 +181,7 @@ REMOTE_BACKUP_DIR="$REMOTE_USER_DIR/.config/backup"
 REMOTE_SCRIPT_DIR="$REMOTE_BACKUP_DIR/scripts"
 REMOTE_LOG_DIR="$REMOTE_BACKUP_DIR/logs"
 
-# --- 7. Dostępność Pi i katalogi docelowe ---
+# --- 8. Dostępność Pi i katalogi docelowe ---
 # Brak Pi: pomijamy kopię bez raportowania fikcyjnego sukcesu i bez blokady dnia.
 if ! ssh -F "$SSH_CONFIG" -o ConnectTimeout=3 -o BatchMode=yes pi true; then
   log 'Pi niedostępne: pomijam backup.'
@@ -200,7 +204,7 @@ else
 fi
 termux-wake-lock 2>/dev/null || true
 
-# --- 8. Aktualizacja wyłącznie run_backup.sh ---
+# --- 9. Aktualizacja wyłącznie run_backup.sh ---
 # Pobierz do pliku tymczasowego, sprawdź format i składnię, a potem podmień atomowo.
 # Po exec nie sprawdzamy aktualizacji drugi raz w tym samym wykonaniu.
 if [ "$AFTER_UPDATE" != '1' ]; then
@@ -223,15 +227,7 @@ if [ "$AFTER_UPDATE" != '1' ]; then
   [ -z "$UPDATED_SCRIPT" ] || rm -f "$UPDATED_SCRIPT"
 fi
 
-# --- 9. Dzienny harmonogram i właściwa kopia telefonu / karty SD ---
-# Aktualizacja jest sprawdzana także po dzisiejszej udanej kopii.
-if [ "$FORCE" = false ] && [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE")" = "$TODAY" ]; then
-  if [ "$ALL_SUCCESS" = false ]; then
-    queue_report && send_pending
-    exit 1
-  fi
-  exit "$DELIVERY_FAILED"
-fi
+# --- 10. Właściwa kopia telefonu / karty SD ---
 # Filtry, ścieżki i parametry rclone są wspólne dla pamięci telefonu i karty SD.
 FILTERS_FILE="$BACKUP_DIR/.rclone-filters.conf"
 PHONE_STORAGE_ROOT="${BACKUP_STORAGE_ROOT:-/storage}"
@@ -273,7 +269,7 @@ else
   fi
 fi
 
-# --- 10. Zapis wyniku, monitoring i wysłanie logów na Pi ---
+# --- 11. Zapis wyniku, monitoring i wysłanie logów na Pi ---
 # Najpierw utrwalamy raport. Błąd backupu lub aktualizacji pozwala ponowić pracę.
 # Niewysłany raport zostaje w kolejce; udana kopia nie jest przez to powtarzana.
 queue_report || exit 1

@@ -184,13 +184,24 @@ exit 0
         self.assertEqual(self.runner.stat().st_mode & 0o777, 0o700)
         self.assertEqual(sum(call.startswith('copyto ') for call in self.rclone_calls()), 1)
 
-    def test_update_after_daily_backup_does_not_repeat_copy(self):
+    def test_daily_backup_skips_pi_and_update_on_later_runs(self):
         self.assertEqual(self.run_backup().returncode, 0)
+        calls_after_backup = self.rclone_calls()
+        self.stub('ssh', '#!/bin/bash\ntouch "$HOME/ssh_contacted"\nexit 255\n')
         self.remote_runner.write_text(self.remote_runner.read_text() + '\n# nowa wersja\n')
         self.assertEqual(self.run_backup().returncode, 0)
-        self.assertIn('# nowa wersja', self.runner.read_text())
+        self.assertNotIn('# nowa wersja', self.runner.read_text())
+        self.assertFalse((self.home / 'ssh_contacted').exists())
+        self.assertEqual(self.rclone_calls(), calls_after_backup)
         self.assertEqual(len(self.reports()), 1)
-        self.assertEqual(sum(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
+
+    def test_force_updates_and_backs_up_again_after_daily_backup(self):
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.remote_runner.write_text(self.remote_runner.read_text() + '\n# nowa wersja\n')
+        self.assertEqual(self.run_backup('--force').returncode, 0)
+        self.assertIn('# nowa wersja', self.runner.read_text())
+        self.assertEqual(len(self.reports()), 2)
+        self.assertEqual(sum(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 2)
 
     def test_unavailable_pi_skips_backup_without_success_report(self):
         self.stub('ssh', '#!/bin/bash\nexit 255\n')
