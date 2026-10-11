@@ -31,6 +31,13 @@ SCRIPT_DIR = getattr(settings, 'BASE_DIR', Path('.')) / "backupapp" / "scripts"
 SCRIPT_PATH = SCRIPT_DIR / "10_backup.sh"
 RCLONE_CONF_PATH = SCRIPT_DIR / "rclone.conf"
 SCRIPT_VERSION = "2026-10-11 monitoring reports"
+SSH_KEY_INSTALL_COMMAND = (
+    'set -eu; umask 077; mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; '
+    'touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"; '
+    'IFS= read -r key; [ -n "$key" ]; '
+    'grep -qxF "$key" "$HOME/.ssh/authorized_keys" || '
+    'printf "\\n%s\\n" "$key" >> "$HOME/.ssh/authorized_keys"'
+)
 
 
 @api_view(['GET'])
@@ -66,6 +73,7 @@ def get_rclone_conf(request):
         return HttpResponse("rclone.conf not found", status=404)
 
 
+@never_cache
 def setup_phone(request, token):
     """
     Wydaje instalator dla telefonu:
@@ -110,7 +118,7 @@ def setup_phone(request, token):
     bash_script = f"""#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 umask 077
-echo "=== Instalacja backupu telefonu dla: {username} ==="
+echo "=== Instalacja backupu telefonu dla: {username} (SSH v2) ==="
 export DEBIAN_FRONTEND=noninteractive
 echo "-> Instaluję wymagane pakiety Termuxa..."
 pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
@@ -144,7 +152,7 @@ if ! ssh-keygen -F '{server_ip}' -f ~/.ssh/known_hosts >/dev/null; then
 fi
 chmod 600 ~/.ssh/known_hosts
 echo "-> Wgrywam klucz logowania na Pi; w razie potrzeby wpisz hasło ponownie."
-ssh-copy-id -i "$HOME/.ssh/id_ed25519.pub" "{ssh_user}@{server_ip}" < /dev/tty
+ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no pi '{SSH_KEY_INSTALL_COMMAND}' < "$HOME/.ssh/id_ed25519.pub"
 if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes pi true < /dev/null; then
   echo "BŁĄD: Logowanie kluczem do Pi nie działa; nie kończę instalacji."
   exit 1

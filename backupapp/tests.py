@@ -12,7 +12,7 @@ from django.conf import settings
 from django.test import SimpleTestCase, RequestFactory
 from django.urls import reverse
 
-from .views import backup_dashboard, setup_phone
+from .views import SSH_KEY_INSTALL_COMMAND, backup_dashboard, setup_phone
 
 
 class DashboardAccessTests(SimpleTestCase):
@@ -74,6 +74,7 @@ class DashboardAccessTests(SimpleTestCase):
         request.user = AnonymousUser()
         response = setup_phone(request, 'test-token')
         self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response.headers['Cache-Control'])
         self.assertIn(b'#!/data/data/com.termux/files/usr/bin/bash', response.content)
         script = response.content.decode()
         installed_runner = script.split("<< 'RUNNER_EOF'\n", 1)[1].split('\nRUNNER_EOF', 1)[0]
@@ -105,13 +106,13 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertNotIn('StrictHostKeyChecking=no', script)
         password_connect = script.index('ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive')
         host_record_check = script.index(f"ssh-keygen -F '{getattr(settings, 'BACKUP_PI_HOST', '192.168.0.131')}' -f ~/.ssh/known_hosts")
-        target = f'{getattr(settings, "BACKUP_PI_USER", "smerf")}@{getattr(settings, "BACKUP_PI_HOST", "192.168.0.131")}'
-        key_copy = script.index(f'ssh-copy-id -i "$HOME/.ssh/id_ed25519.pub" "{target}"')
+        key_copy = script.index(f"pi '{SSH_KEY_INSTALL_COMMAND}' < \"$HOME/.ssh/id_ed25519.pub\"")
         key_connect = script.index('ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey')
         self.assertLess(password_connect, host_record_check)
         self.assertLess(host_record_check, key_copy)
         self.assertLess(key_copy, key_connect)
-        self.assertNotIn('ssh-copy-id -F', script)
+        self.assertNotIn('ssh-copy-id', script)
+        self.assertIn('(SSH v2)', script)
         self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)
@@ -120,3 +121,18 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertNotIn('--period 3600000', script)
         self.assertIn('if ! termux-job-scheduler --job-id 101', script)
         self.assertIn('BŁĄD: Nie udało się zaplanować backupu', script)
+
+    def test_installing_public_key_is_idempotent_and_sets_ssh_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key = 'ssh-ed25519 TEST test@phone\n'
+            for _ in range(2):
+                result = subprocess.run(
+                    ['bash', '-c', SSH_KEY_INSTALL_COMMAND], input=key,
+                    text=True, capture_output=True, env={'HOME': directory},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+            ssh_dir = Path(directory) / '.ssh'
+            authorized_keys = ssh_dir / 'authorized_keys'
+            self.assertEqual(authorized_keys.read_text().splitlines().count(key.strip()), 1)
+            self.assertEqual(ssh_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(authorized_keys.stat().st_mode & 0o777, 0o600)
