@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
 from django.test import SimpleTestCase, override_settings
 from django.test import TestCase
 from django.urls import reverse
@@ -192,6 +193,23 @@ class DashboardTests(TestCase):
         self.assertEqual(ala['sync_result']['status_code'], 0)
         self.assertEqual(zuzia['sync_result']['status_code'], 2)
         self.assertContains(response, 'Zgłoszono błąd')
+
+    @override_settings(LIBRUS_MONITORING_TOKEN='dashboard-test-token')
+    def test_dashboard_finds_report_by_token_when_service_has_another_name(self):
+        service_user = User.objects.create_user(username='librus_service')
+        Token.objects.create(user=service_user, key='dashboard-test-token')
+        service = MonitoredService.objects.create(
+            owner=self.viewer, service_user=service_user, service_name='Synchronizacja szkoły',
+        )
+        report = LogEntry.objects.create(service=service, status_code=0, message={
+            'results': [{'dziecko': 'ala', 'status_code': 0}],
+        })
+
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse('librus:dashboard'))
+        self.assertEqual(response.context['latest_report'].pk, report.pk)
+        self.assertEqual(response.context['children'][0]['sync_result']['status_code'], 0)
+        self.assertNotContains(response, 'Brak raportu synchronizacji Librusa')
 
     def test_dashboard_handles_report_without_child_results(self):
         service = MonitoredService.objects.create(owner=self.viewer, service_name='librus - pobieranie danych')

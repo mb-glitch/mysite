@@ -1,9 +1,10 @@
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.cache import never_cache
 
-from monitoring.models import LogEntry
+from monitoring.models import LogEntry, MonitoredService
 from .grades import summarize_grades
 from .models import Dziecko, HistoriaOceny
 
@@ -11,8 +12,14 @@ from .models import Dziecko, HistoriaOceny
 @never_cache
 @login_required(login_url='backup_login')
 def dashboard(request):
+    service = None
+    if settings.LIBRUS_MONITORING_TOKEN:
+        service = MonitoredService.objects.filter(
+            service_user__auth_token__key=settings.LIBRUS_MONITORING_TOKEN,
+        ).first()
+    report_filter = {'service': service} if service else {'service__service_name__istartswith': 'librus'}
     latest_report = (
-        LogEntry.objects.filter(service__service_name__istartswith='librus')
+        LogEntry.objects.filter(**report_filter)
         .order_by('-checked_at', '-pk')
         .first()
     )
