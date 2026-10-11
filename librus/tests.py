@@ -12,7 +12,7 @@ import requests
 
 from monitoring.client import MonitoringReporter
 from monitoring.models import LogEntry, MonitoredService
-from .models import Dziecko, Ogloszenie, Wiadomosc
+from .models import Dziecko, Ocena, Ogloszenie, Wiadomosc
 from .management.commands.librus_sprawdz import Command, Librus
 
 
@@ -143,13 +143,39 @@ class DashboardTests(TestCase):
         self.assertIn('no-store', response.headers['Cache-Control'])
         self.assertEqual(len(response.context['children']), 2)
         ala, zuzia = response.context['children']
-        self.assertEqual([msg.temat for msg in ala['messages']], [f'Wiadomość {i}' for i in range(5)])
-        self.assertEqual([item.tytul for item in ala['announcements']], [f'Ogłoszenie {i}' for i in range(5)])
-        self.assertEqual([msg.temat for msg in zuzia['messages']], ['Wiadomość Zuzi'])
-        self.assertEqual([item.tytul for item in zuzia['announcements']], ['Ogłoszenie Zuzi'])
+        self.assertEqual(
+            [(entry['kind'], entry['title']) for entry in ala['activity']],
+            [(kind, f'{kind} {index}') for index in range(5) for kind in ('Wiadomość', 'Ogłoszenie')],
+        )
+        self.assertEqual({entry['title'] for entry in zuzia['activity']}, {'Wiadomość Zuzi', 'Ogłoszenie Zuzi'})
+        self.assertEqual(len(zuzia['activity']), 2)
         self.assertContains(response, reverse('librus:grades', args=[self.children[0].pk]))
         self.assertContains(response, reverse('librus:grades', args=[self.children[1].pk]))
         self.assertNotContains(response, '<script>alert(1)</script>', html=False)
+
+    def test_dashboard_shows_ten_recent_active_grades_for_each_child(self):
+        today = timezone.localdate()
+        for index in range(12):
+            Ocena.objects.create(
+                dziecko=self.children[0], librus_id=f'grade-{index}', wartosc='4+',
+                przedmiot='Matematyka', data=today - timedelta(days=index), opis=f'Sprawdzian {index}',
+            )
+        Ocena.objects.create(
+            dziecko=self.children[0], librus_id='archived', wartosc='5',
+            przedmiot='Historia', data=today + timedelta(days=1), archiwizowano_at=timezone.now(),
+        )
+        Ocena.objects.create(
+            dziecko=self.children[1], librus_id='other-child', wartosc='3',
+            przedmiot='Polski', data=today,
+        )
+
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse('librus:dashboard'))
+        ala, zuzia = response.context['children']
+        self.assertEqual([grade.librus_id for grade in ala['recent_grades']], [f'grade-{i}' for i in range(10)])
+        self.assertEqual([grade.librus_id for grade in zuzia['recent_grades']], ['other-child'])
+        self.assertContains(response, 'Sprawdzian 0')
+        self.assertNotContains(response, 'Historia')
 
     def test_latest_fetch_comes_from_monitoring_report_and_shows_per_child_result(self):
         service = MonitoredService.objects.create(owner=self.viewer, service_name='librus - pobieranie danych')

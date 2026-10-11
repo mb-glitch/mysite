@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from librus.client import Librus
 from librus.grades import sync_grades
-from librus.models import Dziecko, Wiadomosc, Ogloszenie
+from librus.models import Dziecko, Ocena, Wiadomosc, Ogloszenie
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,7 +32,32 @@ class Command(BaseCommand):
     help = 'Synchronizuje oceny, wiadomości i ogłoszenia Librusa; wywoływać co godzinę'
 
     def aktualizuj_oceny(self, librus_api, dziecko_obj):
-        return sync_grades(dziecko_obj, librus_api.sprawdz_oceny())
+        first_import = not Dziecko.objects.filter(
+            pk=dziecko_obj.pk, oceny_pobrano_at__isnull=False,
+        ).exists()
+        outcome = sync_grades(dziecko_obj, librus_api.sprawdz_oceny())
+        if first_import:
+            # On a fresh deployment, historical grades are a baseline, not new
+            # notifications. The migration separately marks pre-existing rows.
+            Ocena.objects.filter(
+                dziecko=dziecko_obj,
+                powiadomienie_status=Ocena.POWIADOMIENIE_OCZEKUJE,
+            ).update(powiadomienie_status=Ocena.POWIADOMIENIE_POMINIETE)
+        errors = 0
+        sent = 0
+        for grade in dziecko_obj.oceny.select_related('dziecko__user').filter(
+            archiwizowano_at__isnull=True,
+            powiadomienie_status=Ocena.POWIADOMIENIE_OCZEKUJE,
+        ):
+            try:
+                sent += int(grade.wyslij_powiadomienie())
+            except Exception as exc:
+                errors += 1
+                logger.error('Nie udało się wysłać powiadomienia o nowej ocenie dla %s (%s).', dziecko_obj.user.username, type(exc).__name__)
+        outcome['notifications_sent'] = sent
+        if errors:
+            raise RuntimeError(f'Nie wysłano powiadomień o {errors} nowych ocenach; ponowię przy następnym pobraniu.')
+        return outcome
   
     # ========================
     #  Funkcje pomocnicze

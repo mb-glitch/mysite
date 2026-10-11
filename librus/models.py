@@ -23,6 +23,15 @@ class Dziecko(models.Model):
             
 
 class Ocena(models.Model):
+    POWIADOMIENIE_OCZEKUJE = 'oczekuje'
+    POWIADOMIENIE_WYSLANE = 'wyslane'
+    POWIADOMIENIE_POMINIETE = 'pominiete'
+    POWIADOMIENIE_STATUSY = [
+        (POWIADOMIENIE_OCZEKUJE, 'Oczekuje na wysyłkę'),
+        (POWIADOMIENIE_WYSLANE, 'Wysłano e-mail'),
+        (POWIADOMIENIE_POMINIETE, 'Istniała przed włączeniem powiadomień'),
+    ]
+
     dziecko = models.ForeignKey(Dziecko, on_delete=models.CASCADE, related_name='oceny')
     librus_id = models.CharField(max_length=64)
     wartosc = models.CharField('ocena', max_length=32)
@@ -35,6 +44,10 @@ class Ocena(models.Model):
     zmieniono_at = models.DateTimeField(default=timezone.now)
     ostatnio_widziana_at = models.DateTimeField(default=timezone.now)
     archiwizowano_at = models.DateTimeField(null=True, blank=True)
+    powiadomienie_status = models.CharField(
+        max_length=10, choices=POWIADOMIENIE_STATUSY, default=POWIADOMIENIE_OCZEKUJE,
+    )
+    powiadomiono_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'ocena'
@@ -46,6 +59,30 @@ class Ocena(models.Model):
 
     def __str__(self):
         return f'{self.dziecko}: {self.przedmiot} — {self.wartosc}'
+
+    def wyslij_powiadomienie(self):
+        if self.powiadomienie_status != self.POWIADOMIENIE_OCZEKUJE or self.archiwizowano_at:
+            return False
+        recipients = list(
+            Group.objects.get(name='Librus').user_set
+            .exclude(email='').values_list('email', flat=True).distinct()
+        )
+        if not recipients:
+            raise RuntimeError('Brak adresatów powiadomień w grupie Librus.')
+        subject = f'[{self.dziecko.user.username}] Nowa ocena: {self.przedmiot} — {self.wartosc}'
+        body = (
+            f'Dziecko: {self.dziecko.user.get_full_name() or self.dziecko.user.username}\n'
+            f'Przedmiot: {self.przedmiot}\n'
+            f'Ocena: {self.wartosc}\n'
+            f'Data: {self.data:%Y-%m-%d}\n'
+            f'Opis: {self.opis or "—"}\n'
+        )
+        if send_mail(subject, body, None, recipients, fail_silently=False) != 1:
+            raise RuntimeError('Serwer poczty nie potwierdził wysłania powiadomienia.')
+        self.powiadomienie_status = self.POWIADOMIENIE_WYSLANE
+        self.powiadomiono_at = timezone.now()
+        self.save(update_fields=['powiadomienie_status', 'powiadomiono_at'])
+        return True
 
 
 class HistoriaOceny(models.Model):

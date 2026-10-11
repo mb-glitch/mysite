@@ -3,10 +3,11 @@ import tempfile
 from datetime import date
 from http.cookiejar import LWPCookieJar
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
+from django.core import mail
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
@@ -14,6 +15,7 @@ from .client import Librus, SessionRejected
 from .grades import archive_grades, grade_number, summarize_grades, sync_grades
 from .models import Dziecko, HistoriaOceny, Ocena
 from .session import CookieStore
+from .management.commands.librus_sprawdz import Command
 
 
 def response(body='<a href="/wyloguj">Wyloguj</a>', status=200, url='https://synergia.librus.pl/wiadomosci/5'):
@@ -275,3 +277,67 @@ class GradeSyncTests(TestCase):
         call_command('librus_archiwizuj_oceny', cutoff='2026-10-10', dziecko='child', stdout=StringIO())
         self.assertIsNotNone(self.child.oceny.get().archiwizowano_at)
         self.assertIsNone(self.other_child.oceny.get().archiwizowano_at)
+
+
+class GradeNotificationTests(TestCase):
+    def setUp(self):
+        self.child_user = User.objects.create_user(username='student', first_name='Jan')
+        self.child = Dziecko.objects.create(user=self.child_user, librus_login='student-librus')
+        recipient = User.objects.create_user(username='recipient', email='recipient@example.com')
+        Group.objects.create(name='Librus').user_set.add(recipient)
+        self.grade = {
+            'librus_id': 'old', 'wartosc': '4+', 'przedmiot': 'Matematyka',
+            'data': date(2026, 10, 10), 'opis': 'Sprawdzian',
+            'waga': 2, 'liczona_do_sredniej': True,
+        }
+        self.client = Mock()
+        self.command = Command()
+
+    def test_first_import_is_silent_then_only_new_grade_sends_once(self):
+        self.client.sprawdz_oceny.return_value = [self.grade]
+        self.command.aktualizuj_oceny(self.client, self.child)
+        old = self.child.oceny.get()
+        self.assertEqual(old.powiadomienie_status, Ocena.POWIADOMIENIE_POMINIETE)
+        self.assertEqual(len(mail.outbox), 0)
+
+        current = {**self.grade, 'librus_id': 'new', 'wartosc': '5', 'opis': 'Kartkówka'}
+        self.client.sprawdz_oceny.return_value = [self.grade, current]
+        result = self.command.aktualizuj_oceny(self.client, self.child)
+        self.assertEqual(result['notifications_sent'], 1)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('Matematyka', mail.outbox[0].subject)
+        self.assertIn('5', mail.outbox[0].subject)
+        self.assertIn('Kartkówka', mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].to, ['recipient@example.com'])
+        notified = self.child.oceny.get(librus_id='new')
+        self.assertEqual(notified.powiadomienie_status, Ocena.POWIADOMIENIE_WYSLANE)
+        self.assertIsNotNone(notified.powiadomiono_at)
+
+        self.command.aktualizuj_oceny(self.client, self.child)
+        self.client.sprawdz_oceny.return_value = [self.grade, {**current, 'wartosc': '5+'}]
+        self.command.aktualizuj_oceny(self.client, self.child)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.child.oceny.get(librus_id='old').powiadomienie_status, Ocena.POWIADOMIENIE_POMINIETE)
+
+    def test_failed_email_remains_pending_and_retries_next_run(self):
+        sync_grades(self.child, [self.grade])
+        self.client.sprawdz_oceny.return_value = [self.grade]
+        with patch('librus.models.send_mail', side_effect=RuntimeError('SMTP unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'ponowię'):
+                self.command.aktualizuj_oceny(self.client, self.child)
+        self.assertEqual(self.child.oceny.get().powiadomienie_status, Ocena.POWIADOMIENIE_OCZEKUJE)
+        self.client.sprawdz_oceny.return_value = [self.grade]
+        self.command.aktualizuj_oceny(self.client, self.child)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(self.child.oceny.get().powiadomienie_status, Ocena.POWIADOMIENIE_WYSLANE)
+
+    def test_archived_new_grade_does_not_send_email(self):
+        sync_grades(self.child, [])
+        archive_grades(self.child, date(2026, 1, 31))
+        historical = {**self.grade, 'data': date(2026, 1, 30)}
+        self.client.sprawdz_oceny.return_value = [historical]
+        self.command.aktualizuj_oceny(self.client, self.child)
+        grade = self.child.oceny.get()
+        self.assertIsNotNone(grade.archiwizowano_at)
+        self.assertEqual(grade.powiadomienie_status, Ocena.POWIADOMIENIE_POMINIETE)
+        self.assertEqual(len(mail.outbox), 0)

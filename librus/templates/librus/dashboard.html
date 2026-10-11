@@ -1,6 +1,7 @@
 {% extends 'librus/base.html' %}
 
 {% block title %}Dashboard Librusa{% endblock %}
+{% block main_class %}dashboard-main{% endblock %}
 
 {% block content %}
   <section>
@@ -15,8 +16,9 @@
     {% endif %}
   </section>
 
+  <div class="children-grid">
   {% for item in children %}
-    <section>
+    <section class="child-card">
       <h2><a href="{% url 'librus:grades' item.child.pk %}">{{ item.name }}</a> · <a href="{% url 'librus:grades' item.child.pk %}">Oceny</a></h2>
       {% if latest_report and item.sync_result %}
         <p>Wynik ostatniego pobrania:
@@ -26,15 +28,15 @@
         </p>
       {% endif %}
 
-      <h3>Oceny</h3>
+      <h3>Podsumowanie ocen</h3>
       {% if item.grade_summary.subjects %}
-        <div class="table-wrap"><table>
-          <thead><tr><th>Przedmiot</th><th>Średnia ważona</th><th>Liczba ocen</th></tr></thead>
+        <div class="table-wrap"><table class="summary-table">
+          <thead><tr><th>Przedmiot</th><th>Średnia ważona</th><th>Ocen</th></tr></thead>
           <tbody>{% for subject in item.grade_summary.subjects %}<tr>
             <td>{{ subject.name }}</td><td>{{ subject.mean }}</td><td>{{ subject.count }}</td>
           </tr>{% endfor %}</tbody>
         </table></div>
-        <p><strong>Szacowana średnia końcowa:</strong> {{ item.grade_summary.projected }}</p>
+        <p class="summary-total"><strong>Szacowana średnia końcowa:</strong> {{ item.grade_summary.projected }}</p>
       {% else %}<p class="muted">Brak ocen liczonych do średniej.</p>{% endif %}
       {% if item.child.oceny_archiwum_do %}
         <p class="muted">Ręcznie zarchiwizowano oceny do {{ item.child.oceny_archiwum_do|date:"Y-m-d" }} włącznie.</p>
@@ -42,47 +44,32 @@
         <p class="muted">Archiwizacja semestralna: jeszcze nieuruchomiona. Po zakończeniu semestru uruchom ją ręcznie z wybraną datą.</p>
       {% endif %}
 
-      <h3>Ostatnie wiadomości</h3>
-      {% if item.messages %}
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Data</th><th>Od</th><th>Temat i treść</th></tr></thead>
-            <tbody>
-              {% for message in item.messages %}
-                <tr>
-                  <td class="date">{{ message.display_date|date:"Y-m-d H:i" }}</td>
-                  <td>{{ message.nadawca|default:"—" }}</td>
-                  <td><details><summary>{{ message.temat|default:"(bez tematu)" }}</summary><div class="content">{{ message.tresc|default:"Brak treści"|linebreaksbr }}</div></details></td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <p class="muted">Brak wiadomości.</p>
-      {% endif %}
+      <h3>Ostatnie 10 ocen</h3>
+      {% if item.recent_grades %}
+        <div class="table-wrap"><table class="recent-grades-table">
+          <thead><tr><th>Data</th><th>Przedmiot i opis</th><th>Ocena</th></tr></thead>
+          <tbody>{% for grade in item.recent_grades %}<tr>
+            <td class="date">{{ grade.data|date:"Y-m-d" }}</td>
+            <td>{{ grade.przedmiot }}{% if grade.opis %}<div class="muted">{{ grade.opis }}</div>{% endif %}</td>
+            <td><strong>{{ grade.wartosc }}</strong></td>
+          </tr>{% endfor %}</tbody>
+        </table></div>
+      {% else %}<p class="muted">Brak aktualnych ocen.</p>{% endif %}
 
-      <h3>Ostatnie ogłoszenia</h3>
-      {% if item.announcements %}
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Data</th><th>Od</th><th>Tytuł i treść</th></tr></thead>
-            <tbody>
-              {% for announcement in item.announcements %}
-                <tr>
-                  <td class="date">{{ announcement.display_date|date:"Y-m-d H:i" }}</td>
-                  <td>{{ announcement.nadawca|default:"—" }}</td>
-                  <td><details><summary>{{ announcement.tytul }}</summary><div class="content">{{ announcement.tresc|linebreaksbr }}</div></details></td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <p class="muted">Brak ogłoszeń.</p>
-      {% endif %}
+      <h3>Wiadomości i ogłoszenia · ostatnie 10</h3>
+      {% if item.activity %}
+        <ol class="activity-list">
+          {% for entry in item.activity %}
+            <li>
+              <div class="activity-meta">{{ entry.kind }} · {{ entry.date|date:"Y-m-d H:i" }}{% if entry.sender %} · {{ entry.sender }}{% endif %}</div>
+              <details><summary>{{ entry.title|default:"(bez tytułu)" }}</summary><div class="content">{{ entry.content|default:"Brak treści"|linebreaksbr }}</div></details>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}<p class="muted">Brak wiadomości i ogłoszeń.</p>{% endif %}
     </section>
   {% empty %}
     <section><h2>Dzieci</h2><p class="muted">Brak dzieci przypisanych do Librusa.</p></section>
   {% endfor %}
+  </div>
 {% endblock %}

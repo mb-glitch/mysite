@@ -101,6 +101,10 @@ def sync_grades(child, grades):
                     dziecko=child, librus_id=item['librus_id'],
                     zmieniono_at=now, ostatnio_widziana_at=now, **values,
                     archiwizowano_at=now if cutoff and item['data'] <= cutoff else None,
+                    powiadomienie_status=(
+                        Ocena.POWIADOMIENIE_POMINIETE if cutoff and item['data'] <= cutoff
+                        else Ocena.POWIADOMIENIE_OCZEKUJE
+                    ),
                 )
                 counts['new'] += 1
                 continue

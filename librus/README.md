@@ -20,6 +20,10 @@ Migracje `0008` i `0009` dodają wagi ocen, informację o wliczaniu oceny do śr
 oraz datę graniczną ręcznej archiwizacji. Po tych migracjach uruchom zwykłą
 synchronizację, aby uzupełnić rzeczywiste wagi wcześniej pobranych ocen.
 
+Migracja `0010` dodaje status powiadomienia e-mail. Istniejące oceny oznacza
+jako wcześniejsze, bez wysyłki wiadomości. Pierwszy import na nowym
+środowisku również traktuje cały zestaw jako stan początkowy.
+
 ## Sesje
 
 Ciasteczka są zapisywane osobno dla każdego loginu w `.librus_sessions/`
@@ -85,3 +89,15 @@ do przodu. Panel pokazuje ostatnią ręczną datę archiwizacji dla każdego dzi
 [librus-rs](https://github.com/FlakM/librus-rs/tree/main/src/structs).
 Format ocen, przedmiotów, kategorii i komentarzy został dodatkowo sprawdzony
 na rzeczywistych odpowiedziach kont używanych w tym projekcie.
+
+## E-mail o nowej ocenie
+
+Nowe oceny trafiają mailem do użytkowników grupy `Librus`, tak samo jak
+powiadomienia o wiadomościach i ogłoszeniach. Wysyłka następuje po zapisaniu
+oceny w bazie. Kolejne pobranie tej samej oceny nie wysyła jej ponownie.
+Oceny istniejące przy wdrożeniu mają status „Istniała przed włączeniem
+powiadomień” — nie oznaczamy ich fałszywie jako wysłanych. Oceny dodane
+później otrzymują status „Oczekuje na wysyłkę”, a po potwierdzeniu przez
+backend pocztowy „Wysłano e-mail”. W razie błędu status pozostaje oczekujący;
+komenda spróbuje ponownie przy następnym pobraniu i zgłosi błąd do monitoringu.
+Oceny dopisane już w ręcznie zarchiwizowanym okresie nie wywołują maili.

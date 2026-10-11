@@ -4,8 +4,8 @@ from .models import Dziecko, HistoriaOceny, Ocena, Wiadomosc, Ogloszenie
 
 @admin.register(Ocena)
 class OcenaAdmin(admin.ModelAdmin):
-    list_display = ('dziecko', 'przedmiot', 'wartosc', 'waga', 'liczona_do_sredniej', 'data', 'archiwizowano_at')
-    list_filter = ('dziecko', 'przedmiot', 'archiwizowano_at')
+    list_display = ('dziecko', 'przedmiot', 'wartosc', 'waga', 'liczona_do_sredniej', 'data', 'powiadomienie_status', 'powiadomiono_at', 'archiwizowano_at')
+    list_filter = ('dziecko', 'przedmiot', 'powiadomienie_status', 'archiwizowano_at')
     search_fields = ('przedmiot', 'opis', 'dziecko__user__first_name')
     readonly_fields = tuple(field.name for field in Ocena._meta.fields)
 

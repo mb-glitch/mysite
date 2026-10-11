@@ -26,19 +26,25 @@ def dashboard(request):
     children = []
     for child in Dziecko.objects.select_related('user').order_by('user__first_name', 'user__username'):
         grade_summary = summarize_grades(child.oceny.filter(archiwizowano_at__isnull=True))
+        messages = child.wiadomosci.annotate(display_date=Coalesce('librus_data', 'created')).order_by('-display_date', '-pk')[:10]
+        announcements = child.ogloszenia.annotate(display_date=Coalesce('librus_data', 'created')).order_by('-display_date', '-pk')[:10]
+        activity = [
+            {'kind': 'Wiadomość', 'date': message.display_date, 'sender': message.nadawca,
+             'title': message.temat, 'content': message.tresc, 'pk': message.pk}
+            for message in messages
+        ] + [
+            {'kind': 'Ogłoszenie', 'date': announcement.display_date, 'sender': announcement.nadawca,
+             'title': announcement.tytul, 'content': announcement.tresc, 'pk': announcement.pk}
+            for announcement in announcements
+        ]
+        activity.sort(key=lambda entry: (entry['date'], entry['pk'], entry['kind']), reverse=True)
         children.append({
             'child': child,
             'name': child.user.get_full_name() or child.user.username,
             'grade_summary': grade_summary,
+            'recent_grades': child.oceny.filter(archiwizowano_at__isnull=True).order_by('-data', '-pk')[:10],
             'sync_result': results_by_child.get(child.user.username.casefold()),
-            'messages': list(
-                child.wiadomosci.annotate(display_date=Coalesce('librus_data', 'created'))
-                .order_by('-display_date', '-pk')[:5]
-            ),
-            'announcements': list(
-                child.ogloszenia.annotate(display_date=Coalesce('librus_data', 'created'))
-                .order_by('-display_date', '-pk')[:5]
-            ),
+            'activity': activity[:10],
         })
 
     return render(request, 'librus/dashboard.html', {
