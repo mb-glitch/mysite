@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 class Dziecko(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     librus_login = models.CharField(max_length=100, unique=True)
+    oceny_pobrano_at = models.DateTimeField(null=True, blank=True, editable=False)
+    oceny_archiwum_do = models.DateField(null=True, blank=True, editable=False)
 
     class Meta:
         verbose_name_plural = "Dzieci"
@@ -19,6 +21,54 @@ class Dziecko(models.Model):
     def nazwa_usera(self):
         return self.user.username
             
+
+class Ocena(models.Model):
+    dziecko = models.ForeignKey(Dziecko, on_delete=models.CASCADE, related_name='oceny')
+    librus_id = models.CharField(max_length=64)
+    wartosc = models.CharField('ocena', max_length=32)
+    przedmiot = models.CharField(max_length=255)
+    data = models.DateField()
+    opis = models.TextField(blank=True)
+    waga = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, default=1)
+    liczona_do_sredniej = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    zmieniono_at = models.DateTimeField(default=timezone.now)
+    ostatnio_widziana_at = models.DateTimeField(default=timezone.now)
+    archiwizowano_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'ocena'
+        verbose_name_plural = 'Oceny'
+        ordering = ['-data', '-pk']
+        constraints = [
+            models.UniqueConstraint(fields=['dziecko', 'librus_id'], name='unique_ocena_per_dziecko'),
+        ]
+
+    def __str__(self):
+        return f'{self.dziecko}: {self.przedmiot} — {self.wartosc}'
+
+
+class HistoriaOceny(models.Model):
+    ocena = models.ForeignKey(Ocena, on_delete=models.CASCADE, related_name='historia')
+    wartosc = models.CharField('ocena', max_length=32)
+    przedmiot = models.CharField(max_length=255)
+    data = models.DateField()
+    opis = models.TextField(blank=True)
+    waga = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, default=1)
+    liczona_do_sredniej = models.BooleanField(default=True)
+    zapisano_at = models.DateTimeField(default=timezone.now)
+    powod = models.CharField(max_length=16, choices=[
+        ('zmiana', 'Zmiana oceny'),
+        ('brak', 'Brak w kolejnym pobraniu'),
+        ('powrot', 'Ponowne pojawienie się oceny'),
+        ('semestr', 'Archiwizacja semestru'),
+    ])
+
+    class Meta:
+        verbose_name = 'historia oceny'
+        verbose_name_plural = 'Historia ocen'
+        ordering = ['-zapisano_at', '-pk']
+
 
 class Wiadomosc(models.Model):
     wiadomosc_id = models.CharField(max_length=200)

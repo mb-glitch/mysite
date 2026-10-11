@@ -26,6 +26,22 @@
         </p>
       {% endif %}
 
+      <h3>Oceny</h3>
+      {% if item.grade_summary.subjects %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Przedmiot</th><th>Średnia ważona</th><th>Liczba ocen</th></tr></thead>
+          <tbody>{% for subject in item.grade_summary.subjects %}<tr>
+            <td>{{ subject.name }}</td><td>{{ subject.mean }}</td><td>{{ subject.count }}</td>
+          </tr>{% endfor %}</tbody>
+        </table></div>
+        <p><strong>Szacowana średnia końcowa:</strong> {{ item.grade_summary.projected }}</p>
+      {% else %}<p class="muted">Brak ocen liczonych do średniej.</p>{% endif %}
+      {% if item.child.oceny_archiwum_do %}
+        <p class="muted">Ręcznie zarchiwizowano oceny do {{ item.child.oceny_archiwum_do|date:"Y-m-d" }} włącznie.</p>
+      {% else %}
+        <p class="muted">Archiwizacja semestralna: jeszcze nieuruchomiona. Po zakończeniu semestru uruchom ją ręcznie z wybraną datą.</p>
+      {% endif %}
+
       <h3>Ostatnie wiadomości</h3>
       {% if item.messages %}
         <div class="table-wrap">

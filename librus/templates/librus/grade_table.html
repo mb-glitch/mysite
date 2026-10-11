@@ -1,0 +1,10 @@
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Data</th><th>Przedmiot</th><th>Ocena</th><th>Waga</th><th>Opis</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+        <tr><td class="date">{{ row.data|date:"Y-m-d" }}</td><td>{{ row.przedmiot }}</td><td><strong>{{ row.wartosc }}</strong></td><td>{{ row.waga|default_if_none:"—" }}</td><td>{{ row.opis|default:"—"|linebreaksbr }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

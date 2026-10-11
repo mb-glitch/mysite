@@ -47,7 +47,7 @@ class ReporterTests(SimpleTestCase):
 
 
 class LibrusMonitoringTests(SimpleTestCase):
-    def run_command(self, client_side_effect=None, missing_credentials=False):
+    def run_command(self, client_side_effect=None, missing_credentials=False, grades_error=None):
         env = {
             'LIBRUS_USER_ASIA': '' if missing_credentials else 'login1', 'LIBRUS_PASS_ASIA': 'password1', 'LIBRUS_IMIE_ASIA': 'asia',
             'LIBRUS_USER_ZUZIA': 'login2', 'LIBRUS_PASS_ZUZIA': 'password2', 'LIBRUS_IMIE_ZUZIA': 'zuzia',
@@ -58,8 +58,10 @@ class LibrusMonitoringTests(SimpleTestCase):
             if client_side_effect:
                 client.side_effect = client_side_effect
             command = Command()
-            with patch.object(command, 'aktualizuj_baze'), patch.object(command, 'aktualizuj_ogloszenia'):
+            with patch.object(command, 'aktualizuj_baze') as messages, patch.object(command, 'aktualizuj_ogloszenia'), patch.object(command, 'aktualizuj_oceny', return_value={'total': 0}, side_effect=grades_error):
                 command.handle()
+                if grades_error:
+                    self.assertEqual(messages.call_count, 2)
             reporter.return_value.send.assert_called_once()
             return reporter.return_value.send.call_args.kwargs
 
@@ -78,6 +80,12 @@ class LibrusMonitoringTests(SimpleTestCase):
         report = self.run_command(missing_credentials=True)
         self.assertEqual(report['status_code'], 2)
         self.assertIn('Brak danych logowania', report['message']['error'])
+
+    def test_grade_failure_is_reported_without_blocking_messages(self):
+        report = self.run_command(grades_error=ValueError('Niepełne dane ocen'))
+        self.assertEqual(report['status_code'], 2)
+        self.assertTrue(all(item['status_code'] == 2 for item in report['message']['results']))
+        self.assertIn('oceny: Niepełne dane ocen', report['message']['error'])
 
     def test_download_errors_propagate_to_report(self):
         client = Librus.__new__(Librus)
@@ -167,7 +175,7 @@ class DashboardTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context['children'][0]['sync_result'])
 
-    def test_grade_page_is_a_placeholder_for_the_selected_child(self):
+    def test_grade_page_is_for_the_selected_child(self):
         self.client.force_login(self.viewer)
         url = reverse('librus:grades', args=[self.children[0].pk])
         response = self.client.get(url)

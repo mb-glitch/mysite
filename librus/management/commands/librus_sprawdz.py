@@ -1,11 +1,11 @@
 import datetime
 import logging
-import requests
-import bs4
 import os
 from monitoring.client import MonitoringReporter
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from librus.client import Librus
+from librus.grades import sync_grades
 from librus.models import Dziecko, Wiadomosc, Ogloszenie
 from dotenv import load_dotenv
 
@@ -28,145 +28,11 @@ def parse_librus_date(value):
             continue
     return None
 
-class Librus:
-    def __init__(self, user, user_pass, dziecko):
-        self.session = requests.Session()
-        # Kluczowe: Przeglądarka zawsze wysyła User-Agent
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Requested-With': 'XMLHttpRequest' # To mówi Librusowi, że jesteśmy "nowoczesną aplikacją"
-        })
-        self.login = user
-        self.dziecko = dziecko
-        self.password = user_pass
-        self.do_login()
-
-    def do_login(self):
-        logger.info("Logowanie: %s", self.login)
-
-        # 1. START FLOW (WAŻNE)
-        r1 = self.session.get(
-            "https://synergia.librus.pl/loguj/portalRodzina",
-            headers=self.session.headers,
-            allow_redirects=True,
-            timeout=20
-        )
-
-        # 2. POST login
-        login_url = r1.url
-
-        r2 = self.session.post(
-            login_url,
-            headers=self.session.headers,
-            data={
-                "action": "login",
-                "login": self.login,
-                "pass": self.password
-            },
-            timeout=20
-        )
-
-        # 3. JSON response check
-        try:
-            data = r2.json()
-        except Exception:
-            logger.error("Brak JSON — login failed")
-            raise
-
-        if "goTo" not in data:
-            logger.error("Brak goTo — login failed")
-            raise Exception("Login failed")
-
-        # 4. FINALIZE SESSION
-        final_url = "https://api.librus.pl" + data["goTo"]
-        self.session.get(final_url, headers=self.session.headers, timeout=20)
-
-        # 5. TEST SESSION (KLUCZOWE)
-        test = self.session.get(
-            "https://synergia.librus.pl/wiadomosci/5",
-            headers=self.session.headers
-        )
-
-        if "Brak dostępu" in test.text:
-            raise Exception("Session failed")
-
-        logger.info("Login OK")
-    
-    def close(self):
-        # self.session.cookies.clear()
-        self.session.close()
-    
-    def sprawdz_wiadomosci(self):
-        try:
-            resp = self.session.get("https://synergia.librus.pl/wiadomosci/5", timeout=50)
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            logger.error("Pobieranie listy wiadomości nie powiodło się: %s", e)
-            raise
-
-        soup = bs4.BeautifulSoup(resp.text, "html.parser")
-        rows = soup.select("table.decorated.stretch tr[class^='line']")
-        lista = []
-        for row in rows:
-            tds = row.find_all("td")
-            if len(tds) >= 3:
-                link = tds[2].find("a")
-                if link and link.get("href", "").startswith("/wiadomosci/1/5/"):
-                    id_ = link["href"]
-                    data = tds[4].get_text(strip=True)
-                    temat = tds[3].get_text(strip=True)
-                    nadawca = link.get_text(strip=True)
-                    lista.append({"id": id_, "data": data, "nadawca": nadawca, "temat": temat, "dziecko": self.dziecko})
-        return lista
-
-    def sprawdz_ogloszenia(self):
-        try:
-            resp = self.session.get("https://synergia.librus.pl/ogloszenia", timeout=10)
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            logger.error("Pobieranie ogłoszeń nie powiodło się: %s", e)
-            raise
-
-        soup = bs4.BeautifulSoup(resp.text, "html.parser")
-        lista = []
-        for o in soup.select("table"):
-            data_tag = o.find("tr", class_="line0")
-            tytul_tag = o.find("thead")
-            if not data_tag or not tytul_tag:
-                continue
-            data = data_tag.find("td").get_text(strip=True)
-            tytul = tytul_tag.find("td").get_text(strip=True)
-            kto = ""
-            tresc = ""
-            for line in o.find_all("tr"):
-                th = line.find("th")
-                if th:
-                    label = th.get_text(strip=True)
-                    if label == "Treść":
-                        tresc = line.find("td").get_text("\n", strip=True)
-                    elif label == "Dodał":
-                        kto = line.find("td").get_text(strip=True)
-            id_ = f"{data}-{tytul}"
-            lista.append({"id": id_, "data": data, "tytul": tytul, "kto": kto, "tresc": tresc, "dziecko": self.dziecko})
-        return lista
-
-    def pobierz_tresc(self, id_):
-        try:
-            resp = self.session.get(f"https://synergia.librus.pl{id_}", timeout=10)
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            logger.error("Pobieranie wiadomości %s nie powiodło się: %s", id_, e)
-            raise
-        soup = bs4.BeautifulSoup(resp.text, "html.parser")
-        content = soup.find("div", {"class": "container-message-content"})
-        return content.get_text("\n", strip=True) if content else None
-
-
-
-
 class Command(BaseCommand):
-    help = 'Importuje dane ze strony librus synergia, wywoływać co godzinę'
+    help = 'Synchronizuje oceny, wiadomości i ogłoszenia Librusa; wywoływać co godzinę'
+
+    def aktualizuj_oceny(self, librus_api, dziecko_obj):
+        return sync_grades(dziecko_obj, librus_api.sprawdz_oceny())
   
     # ========================
     #  Funkcje pomocnicze
@@ -288,19 +154,32 @@ class Command(BaseCommand):
             librus_client = None
             try:
                 logger.info(f"Rozpoczynam synchronizację dla: {dziecko['name']}")
-                # 1. Logowanie
-                librus_client = Librus(dziecko["user"], dziecko["pass"], dziecko["name"])
                 dziecko_obj = Dziecko.objects.filter(
                     user__username__iexact=dziecko["name"]
                 ).first()
                 if not dziecko_obj:
                     raise ValueError(f"Nie znaleziono dziecka w DB: {dziecko['name']}")
+                librus_client = Librus(dziecko["user"], dziecko["pass"], dziecko["name"])
                 logger.debug(dziecko_obj)
                 # 2. Pobieranie danych (używamy Twoich funkcji pomocniczych)
-                self.aktualizuj_baze(librus_client, dziecko_obj)
-                self.aktualizuj_ogloszenia(librus_client, dziecko_obj)
-                
-                logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
+                errors = []
+                for name, operation in (
+                    ('oceny', self.aktualizuj_oceny),
+                    ('wiadomości', self.aktualizuj_baze),
+                    ('ogłoszenia', self.aktualizuj_ogloszenia),
+                ):
+                    try:
+                        outcome = operation(librus_client, dziecko_obj)
+                        if name == 'oceny':
+                            result['grades'] = outcome
+                    except Exception as exc:
+                        errors.append(f'{name}: {exc}')
+                        result.update(status_code=2, error_type=type(exc).__name__)
+                if errors:
+                    result['error'] = '; '.join(errors)
+                    logger.error('Błąd synchronizacji %s: %s', dziecko['name'], result['error'])
+                else:
+                    logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
                 result.update(status_code=2, error=str(e), error_type=type(e).__name__)

@@ -26,6 +26,7 @@ db.dev-*.sqlite3
 librus.db
 media/
 staticfiles/
+.librus_sessions/
 
 
 

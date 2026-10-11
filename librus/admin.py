@@ -1,5 +1,32 @@
 from django.contrib import admin
-from .models import Dziecko, Wiadomosc, Ogloszenie
+from .models import Dziecko, HistoriaOceny, Ocena, Wiadomosc, Ogloszenie
+
+
+@admin.register(Ocena)
+class OcenaAdmin(admin.ModelAdmin):
+    list_display = ('dziecko', 'przedmiot', 'wartosc', 'waga', 'liczona_do_sredniej', 'data', 'archiwizowano_at')
+    list_filter = ('dziecko', 'przedmiot', 'archiwizowano_at')
+    search_fields = ('przedmiot', 'opis', 'dziecko__user__first_name')
+    readonly_fields = tuple(field.name for field in Ocena._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(HistoriaOceny)
+class HistoriaOcenyAdmin(admin.ModelAdmin):
+    list_display = ('ocena', 'wartosc', 'waga', 'zapisano_at', 'powod')
+    list_filter = ('ocena__dziecko', 'powod')
+    readonly_fields = tuple(field.name for field in HistoriaOceny._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 @admin.register(Dziecko)
 class DzieckoAdmin(admin.ModelAdmin):
