@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Librus{% endblock %}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f5f7; color: #333; font: 14px/1.5 Arial, sans-serif; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #417690; color: white; padding: 14px 24px; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 500; }
+    header a { color: white; }
+    main { max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+    section { margin-bottom: 24px; background: white; border: 1px solid #ddd; }
+    h2 { margin: 0; padding: 8px 12px; background: #79aec8; color: white; font-size: 14px; font-weight: 600; }
+    h2 a { color: white; }
+    h3 { margin: 16px 12px 8px; font-size: 14px; }
+    p { margin: 12px; }
+    a { color: #417690; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+    th { background: #f8f8f8; color: #666; font-size: 12px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .table-wrap { overflow-x: auto; }
+    .date { white-space: nowrap; }
+    .muted { color: #777; }
+    details summary { color: #417690; cursor: pointer; }
+    .content { max-width: 600px; white-space: normal; overflow-wrap: anywhere; }
+    .ok { color: #237a37; }
+    .error { color: #b42318; }
+    @media (max-width: 650px) { th, td { padding: 8px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Librus</h1>
+    <nav><a href="{% url 'librus:dashboard' %}">Dashboard</a> · <a href="{% url 'backup_dashboard' %}">Backup</a></nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

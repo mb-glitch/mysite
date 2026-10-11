@@ -1,0 +1,72 @@
+{% extends 'librus/base.html' %}
+
+{% block title %}Dashboard Librusa{% endblock %}
+
+{% block content %}
+  <section>
+    <h2>Ostatnie pobranie</h2>
+    {% if latest_report %}
+      <p>Ostatnia próba synchronizacji: {{ latest_report.checked_at|date:"Y-m-d H:i:s" }}.
+        {% if latest_report.status_code == 0 %}<span class="ok">Bez zgłoszonych błędów.</span>
+        {% else %}<span class="error">Zgłoszono błąd — sprawdź wynik przy dziecku.</span>{% endif %}
+      </p>
+    {% else %}
+      <p class="muted">Brak raportu synchronizacji Librusa w monitoringu.</p>
+    {% endif %}
+  </section>
+
+  {% for item in children %}
+    <section>
+      <h2><a href="{% url 'librus:grades' item.child.pk %}">{{ item.name }}</a> · <a href="{% url 'librus:grades' item.child.pk %}">Oceny</a></h2>
+      {% if latest_report and item.sync_result %}
+        <p>Wynik ostatniego pobrania:
+          {% if item.sync_result.status_code == 0 %}<span class="ok">OK</span>
+          {% else %}<span class="error">Błąd</span>{% endif %}
+          {% if item.sync_result.error %} — {{ item.sync_result.error }}{% endif %}
+        </p>
+      {% endif %}
+
+      <h3>Ostatnie wiadomości</h3>
+      {% if item.messages %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Od</th><th>Temat i treść</th></tr></thead>
+            <tbody>
+              {% for message in item.messages %}
+                <tr>
+                  <td class="date">{{ message.display_date|date:"Y-m-d H:i" }}</td>
+                  <td>{{ message.nadawca|default:"—" }}</td>
+                  <td><details><summary>{{ message.temat|default:"(bez tematu)" }}</summary><div class="content">{{ message.tresc|default:"Brak treści"|linebreaksbr }}</div></details></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Brak wiadomości.</p>
+      {% endif %}
+
+      <h3>Ostatnie ogłoszenia</h3>
+      {% if item.announcements %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Od</th><th>Tytuł i treść</th></tr></thead>
+            <tbody>
+              {% for announcement in item.announcements %}
+                <tr>
+                  <td class="date">{{ announcement.display_date|date:"Y-m-d H:i" }}</td>
+                  <td>{{ announcement.nadawca|default:"—" }}</td>
+                  <td><details><summary>{{ announcement.tytul }}</summary><div class="content">{{ announcement.tresc|linebreaksbr }}</div></details></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Brak ogłoszeń.</p>
+      {% endif %}
+    </section>
+  {% empty %}
+    <section><h2>Dzieci</h2><p class="muted">Brak dzieci przypisanych do Librusa.</p></section>
+  {% endfor %}
+{% endblock %}

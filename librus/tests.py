@@ -1,11 +1,18 @@
 import os
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
+from django.contrib.auth.models import User
 from django.test import SimpleTestCase, override_settings
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
 import requests
 
 from monitoring.client import MonitoringReporter
+from monitoring.models import LogEntry, MonitoredService
+from .models import Dziecko, Ogloszenie, Wiadomosc
 from .management.commands.librus_sprawdz import Command, Librus
 
 
@@ -79,3 +86,93 @@ class LibrusMonitoringTests(SimpleTestCase):
         for method, args in ((client.sprawdz_wiadomosci, ()), (client.sprawdz_ogloszenia, ()), (client.pobierz_tresc, ('/test',))):
             with self.subTest(method=method.__name__), self.assertRaises(requests.Timeout):
                 method(*args)
+
+
+class DashboardTests(TestCase):
+    def setUp(self):
+        self.viewer = User.objects.create_user(username='rodzic')
+        users = (
+            User.objects.create_user(username='ala', first_name='Ala', last_name='Nowak'),
+            User.objects.create_user(username='zuzia', first_name='Zuzia', last_name='Nowak'),
+        )
+        self.children = [
+            Dziecko.objects.create(user=user, librus_login=f'login-{user.username}')
+            for user in users
+        ]
+
+    def test_dashboard_and_grade_pages_require_login(self):
+        for url in (reverse('librus:dashboard'), reverse('librus:grades', args=[self.children[0].pk])):
+            response = self.client.get(url)
+            self.assertRedirects(
+                response, f'{reverse("backup_login")}?next={url}',
+                fetch_redirect_response=False,
+            )
+
+    def test_recent_records_are_grouped_by_child_and_sorted_by_librus_date(self):
+        now = timezone.now()
+        for index in range(7):
+            Wiadomosc.objects.create(
+                wiadomosc_id=f'm-{index}', dziecko=self.children[0],
+                librus_data=now - timedelta(days=index),
+                temat=f'Wiadomość {index}', tresc='<script>alert(1)</script>',
+            )
+            Ogloszenie.objects.create(
+                ogloszenie_id=f'a-{index}', dziecko=self.children[0],
+                librus_data=now - timedelta(days=index),
+                tytul=f'Ogłoszenie {index}', tresc='Treść ogłoszenia',
+            )
+        Wiadomosc.objects.create(
+            wiadomosc_id='z-1', dziecko=self.children[1],
+            temat='Wiadomość Zuzi', tresc='Dla Zuzi',
+        )
+        Ogloszenie.objects.create(
+            ogloszenie_id='z-1', dziecko=self.children[1],
+            tytul='Ogłoszenie Zuzi', tresc='Dla Zuzi',
+        )
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse('librus:dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response.headers['Cache-Control'])
+        self.assertEqual(len(response.context['children']), 2)
+        ala, zuzia = response.context['children']
+        self.assertEqual([msg.temat for msg in ala['messages']], [f'Wiadomość {i}' for i in range(5)])
+        self.assertEqual([item.tytul for item in ala['announcements']], [f'Ogłoszenie {i}' for i in range(5)])
+        self.assertEqual([msg.temat for msg in zuzia['messages']], ['Wiadomość Zuzi'])
+        self.assertEqual([item.tytul for item in zuzia['announcements']], ['Ogłoszenie Zuzi'])
+        self.assertContains(response, reverse('librus:grades', args=[self.children[0].pk]))
+        self.assertContains(response, reverse('librus:grades', args=[self.children[1].pk]))
+        self.assertNotContains(response, '<script>alert(1)</script>', html=False)
+
+    def test_latest_fetch_comes_from_monitoring_report_and_shows_per_child_result(self):
+        service = MonitoredService.objects.create(owner=self.viewer, service_name='librus - pobieranie danych')
+        LogEntry.objects.create(service=service, status_code=0, message={
+            'results': [{'dziecko': 'ala', 'status_code': 0}, {'dziecko': 'zuzia', 'status_code': 0}],
+        })
+        latest = LogEntry.objects.create(service=service, status_code=2, message={
+            'results': [{'dziecko': 'ala', 'status_code': 0}, {'dziecko': 'zuzia', 'status_code': 2}],
+        })
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse('librus:dashboard'))
+        self.assertEqual(response.context['latest_report'].pk, latest.pk)
+        ala, zuzia = response.context['children']
+        self.assertEqual(ala['sync_result']['status_code'], 0)
+        self.assertEqual(zuzia['sync_result']['status_code'], 2)
+        self.assertContains(response, 'Zgłoszono błąd')
+
+    def test_dashboard_handles_report_without_child_results(self):
+        service = MonitoredService.objects.create(owner=self.viewer, service_name='librus - pobieranie danych')
+        LogEntry.objects.create(service=service, status_code=2, message={'results': None})
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse('librus:dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['children'][0]['sync_result'])
+
+    def test_grade_page_is_a_placeholder_for_the_selected_child(self):
+        self.client.force_login(self.viewer)
+        url = reverse('librus:grades', args=[self.children[0].pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response.headers['Cache-Control'])
+        self.assertContains(response, 'Oceny — Ala Nowak')
+        self.assertNotContains(response, 'Zuzia Nowak')
+        self.assertEqual(self.client.get(reverse('librus:grades', args=[99999])).status_code, 404)
