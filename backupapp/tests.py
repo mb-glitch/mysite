@@ -80,3 +80,5 @@ class DashboardAccessTests(SimpleTestCase):
             self.assertIn('stricthostkeychecking true', result.stdout)
         self.assertNotIn('StrictHostKeyChecking=no', script)
         self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
+        self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
+        self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)

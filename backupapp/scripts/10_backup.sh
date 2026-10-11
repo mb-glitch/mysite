@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ==============================================================================
-# /media/pi/elemele/$kto/.skrypty/10_backup.sh
+# /media/pi/elemele/$kto/.config/backup/scripts/10_backup.sh
 # Skrypt roboczy: Kopia zdjęć i plików przez Rclone copy (Worker)
 # Uruchamiany automatycznie przez orkiestratora ~/backup/run_backup.sh
 # ==============================================================================

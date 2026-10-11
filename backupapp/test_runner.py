@@ -27,7 +27,7 @@ class BackupRunnerTests(SimpleTestCase):
         self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
         for tool in ('ssh', 'termux-wake-lock', 'termux-wake-unlock', 'termux-notification'):
             self.stub(tool, '#!/bin/bash\nexit 0\n')
-        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *".skrypty"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
+        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *"/.config/backup/scripts"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
         self.stub('curl', f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
@@ -149,7 +149,7 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
     def test_autoupdate_restarts_runner_without_losing_lock(self):
         self.task('10 success.sh', 0)
         self.stub('rclone', '#!/bin/bash\n'
-                  'if [[ "$*" == *".skrypty"* ]] && [ ! -f "$HOME/updated" ]; then\n'
+                  'if [[ "$*" == *"/.config/backup/scripts"* ]] && [ ! -f "$HOME/updated" ]; then\n'
                   '  touch "$HOME/updated"\n'
                   '  printf "\\n# aktualizacja\\n" >> "$HOME/backup/run_backup.sh"\n'
                   'fi\n'
@@ -157,3 +157,47 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertEqual(self.run_backup().returncode, 0)
         self.assertTrue((self.home / 'updated').exists())
         self.assertEqual(len(self.reports()), 1)
+        self.assertEqual((self.backup / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
+
+    def test_legacy_pi_files_are_copied_and_new_paths_are_used(self):
+        pi_root = self.home / 'pi' / 'test'
+        old_scripts = pi_root / '.skrypty'
+        old_logs = pi_root / 'logs'
+        old_scripts.mkdir(parents=True)
+        old_logs.mkdir()
+        shutil.copyfile(self.backup / 'run_backup.sh', old_scripts / 'run_backup.sh')
+        (old_scripts / '10 from pi.sh').write_text('#!/bin/bash\nexit 0\n')
+        (old_logs / 'history.log').write_text('stary wpis\n')
+        (self.backup / '.user.conf').write_text(f'KTO="test"\nDEST_BASE="{self.home / "pi"}"\n')
+        self.stub('ssh', '#!/bin/bash\ncommand="${@: -1}"\nbash -c "$command"\n')
+        self.stub('rclone', '#!/bin/bash\n'
+                  'while [ "$1" != copy ]; do shift; done\n'
+                  'source="$2"; destination="$3"\n'
+                  'if [[ "$source" == pi:* ]]; then\n'
+                  '  cp -R "${source#pi:}/." "$destination/"\n'
+                  'elif [[ "$destination" == pi:* ]]; then\n'
+                  '  mkdir -p "${destination#pi:}"\n'
+                  '  cp -R "$source/." "${destination#pi:}/"\n'
+                  'fi\n')
+        self.assertEqual(self.run_backup().returncode, 0)
+        new_root = pi_root / '.config' / 'backup'
+        self.assertTrue((new_root / 'scripts' / '10 from pi.sh').exists())
+        self.assertEqual((new_root / 'scripts' / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
+        self.assertTrue((self.backup / '10 from pi.sh').exists())
+        self.assertEqual((self.backup / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
+        self.assertEqual((new_root / 'logs' / 'history.log').read_text(), 'stary wpis\n')
+        self.assertTrue((new_root / 'logs' / 'backup.log').exists())
+        self.assertTrue(old_scripts.exists())
+        self.assertTrue(old_logs.exists())
+        self.assertEqual(new_root.stat().st_mode & 0o777, 0o700)
+
+    def test_remote_directory_error_is_reported_without_running_tasks(self):
+        self.task('10 success.sh', 0)
+        self.stub('ssh', '#!/bin/bash\n'
+                  'if [ "${@: -1}" = true ]; then exit 0; fi\n'
+                  'exit 13\n')
+        self.assertEqual(self.run_backup().returncode, 1)
+        self.assertEqual(self.reports()[0]['status_code'], 2)
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'prepare_remote')
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 13)
+        self.assertFalse((self.backup / '.locks/10 success.sh.done').exists())

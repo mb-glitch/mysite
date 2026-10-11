@@ -129,7 +129,7 @@ echo "-> Autoryzacja SSH na Raspberry Pi ({ssh_user}@{server_ip}):"
 echo "Przy pierwszym połączeniu porównaj odcisk klucza hosta z kluczem Raspberry Pi, zanim go zaakceptujesz."
 ssh-copy-id -F ~/.ssh/config -o StrictHostKeyChecking=ask -i ~/.ssh/id_ed25519.pub pi < /dev/tty
 chmod 600 ~/.ssh/known_hosts
-ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes pi "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty' '/media/pi/elemele/{username}/logs'" < /dev/null
+ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes pi "umask 077; mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'; chmod 700 '/media/pi/elemele/{username}/.config/backup' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'" < /dev/null
 
 BACKUP_DIR="$HOME/backup"
 mkdir -p "$BACKUP_DIR" ~/.config/rclone

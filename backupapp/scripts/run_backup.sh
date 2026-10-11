@@ -124,19 +124,58 @@ if [ "$ALL_SUCCESS" = false ]; then
   exit 1
 fi
 
+DEST_BASE="${DEST_BASE:-/media/pi/elemele}"
+REMOTE_USER_DIR="$DEST_BASE/$KTO"
+REMOTE_BACKUP_DIR="$REMOTE_USER_DIR/.config/backup"
+REMOTE_SCRIPT_DIR="$REMOTE_BACKUP_DIR/scripts"
+REMOTE_LOG_DIR="$REMOTE_BACKUP_DIR/logs"
+
 # Brak sieci domowej przed rozpoczęciem zadań jest pominięciem, a nie udanym backupem.
 if ! ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o ConnectTimeout=3 -o BatchMode=yes pi true; then
   log 'Pi niedostępne: pomijam zadania.'
   exit "$DELIVERY_FAILED"
+fi
+
+# Jednorazowo skopiuj stare pliki do nowej lokalizacji, bez nadpisywania
+# skryptów i logów już tam umieszczonych. Stare katalogi zostają do czasu,
+# aż wszystkie zainstalowane telefony przejdą na nową wersję runnera.
+if ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o BatchMode=yes pi "
+  set -e
+  umask 077
+  mkdir -p '$REMOTE_SCRIPT_DIR' '$REMOTE_LOG_DIR' &&
+  chmod 700 '$REMOTE_BACKUP_DIR' '$REMOTE_SCRIPT_DIR' '$REMOTE_LOG_DIR' &&
+  if [ -d '$REMOTE_USER_DIR/.skrypty' ] && [ ! -e '$REMOTE_BACKUP_DIR/.legacy-scripts-imported' ]; then
+    cp -Rn '$REMOTE_USER_DIR/.skrypty/.' '$REMOTE_SCRIPT_DIR/' &&
+    touch '$REMOTE_BACKUP_DIR/.legacy-scripts-imported' || exit 1
+  fi
+  if [ -d '$REMOTE_USER_DIR/logs' ] && [ ! -e '$REMOTE_BACKUP_DIR/.legacy-logs-imported' ]; then
+    cp -Rn '$REMOTE_USER_DIR/logs/.' '$REMOTE_LOG_DIR/' &&
+    touch '$REMOTE_BACKUP_DIR/.legacy-logs-imported' || exit 1
+  fi
+  if [ -f '$REMOTE_SCRIPT_DIR/run_backup.sh' ]; then
+    chmod 700 '$REMOTE_SCRIPT_DIR/run_backup.sh'
+  fi
+" < /dev/null; then
+  :
+else
+  code=$?
+  add_failure 'prepare_remote' "$code" 'Nie udało się przygotować katalogów skryptów i logów na Pi'
+  queue_report && send_pending
+  exit 1
 fi
 termux-wake-lock 2>/dev/null || true
 trap 'termux-wake-unlock 2>/dev/null || true' EXIT
 
 RUNNER_OLD_HASH=$(md5sum "$BACKUP_DIR/run_backup.sh" | cut -d' ' -f1)
 rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy \
-  "pi:/media/pi/elemele/$KTO/.skrypty" "$BACKUP_DIR" --fast-list -q
+  "pi:$REMOTE_SCRIPT_DIR" "$BACKUP_DIR" --fast-list -q
 SYNC_CODE=$?
 if [ "$SYNC_CODE" -ne 0 ]; then add_failure 'sync_scripts' "$SYNC_CODE" 'Nie udało się pobrać skryptów z Pi'; fi
+if ! chmod 700 "$BACKUP_DIR/run_backup.sh"; then
+  add_failure 'runner_permissions' 1 'Nie można nadać uprawnień wykonywania run_backup.sh'
+  queue_report && send_pending
+  exit 1
+fi
 
 mkdir -p "$HOME/.config/rclone" "$HOME/.ssh"
 for config in .rclone.conf rclone.conf; do
@@ -187,6 +226,6 @@ else
   termux-notification --title "Błąd backupu ($KTO)" --content "$FAILED_TASKS" --id 999 2>/dev/null || true
 fi
 rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy \
-  "$LOG_DIR" "pi:/media/pi/elemele/$KTO/logs" --fast-list -q || log 'Nie udało się przesłać logów na Pi.'
+  "$LOG_DIR" "pi:$REMOTE_LOG_DIR" --fast-list -q || log 'Nie udało się przesłać logów na Pi.'
 if [ "$ALL_SUCCESS" = false ]; then exit 1; fi
 exit "$DELIVERY_FAILED"
