@@ -7,3 +7,4 @@ dotenv
 whitenoise
 gunicorn
 mysqlclient
+qrcode==8.2

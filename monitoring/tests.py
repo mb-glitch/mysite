@@ -250,11 +250,11 @@ class MonitoringTests(TestCase):
         log = LogEntry.objects.create(service=self.service, status_code=0)
         now = timezone.now()
         for delay, code, active, expected, label in (
-            (0, 0, True, 0, 'DZIAŁA POPRAWNIE'),
-            (61, 0, True, 1, 'OPÓŹNIENIE / OSTRZEŻENIE'),
-            (181, 0, True, 2, 'BRAK MELDUNKU'),
-            (0, 2, True, 4, 'BŁĄD ZGŁOSZONY PRZEZ USŁUGĘ'),
-            (0, 2, False, 3, 'USŁUGA WYŁĄCZONA'),
+            (0, 0, True, 0, 'OK'),
+            (61, 0, True, 1, 'PREFAIL'),
+            (181, 0, True, 2, 'FAIL'),
+            (0, 2, True, 4, 'ERROR'),
+            (0, 2, False, 3, 'INACTIVE'),
         ):
             with self.subTest(expected=expected):
                 LogEntry.objects.filter(pk=log.pk).update(
@@ -265,4 +265,4 @@ class MonitoringTests(TestCase):
                     response = client.get(reverse('backup_dashboard'))
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.context['services'][0]['status_code'], expected)
-                self.assertContains(response, label)
+                self.assertContains(response, f'>{label}</span>')

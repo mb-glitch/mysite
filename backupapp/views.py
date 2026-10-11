@@ -3,7 +3,11 @@
 # Aplikacja: BACKUPAPP
 # Onboarding telefonów z użyciem Tokenu konta maszynowego DRF
 # ==============================================================================
+import base64
 from pathlib import Path
+
+import qrcode
+from qrcode.image.svg import SvgPathImage
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
@@ -244,23 +248,19 @@ def backup_dashboard(request):
 
     display_data = []
     for invite in active_invites:
-        user_name = invite.user.username.lower()
-        token_key = invite.token_link
-        setup_url = request.build_absolute_uri(reverse('setup_phone', args=[token_key]))
-        claim_url = request.build_absolute_uri(reverse('claim_invitation', args=[token_key]))
-        one_liner = f"curl -sL {setup_url} -o ~/setup.sh && bash ~/setup.sh"
+        setup_url = request.build_absolute_uri(reverse('setup_phone', args=[invite.token_link]))
+        qr = qrcode.QRCode(box_size=4, border=4)
+        qr.add_data(setup_url)
+        qr.make(fit=True)
+        svg = qr.make_image(image_factory=SvgPathImage).to_string()
         display_data.append({
-            'user': user_name,
-            'token': token_key,
-            'one_liner': one_liner,
+            'user': invite.user.username,
             'setup_url': setup_url,
-            'claim_url': claim_url,
-            'created_at': invite.created_at.strftime('%Y-%m-%d %H:%M') if invite.created_at else '',
+            'qr_data_uri': 'data:image/svg+xml;base64,' + base64.b64encode(svg).decode('ascii'),
         })
 
     return render(request, 'backup_dashboard.html', {
         'invitations': display_data,
-        'has_active': len(display_data) > 0,
         'services': services_data,
     })
 

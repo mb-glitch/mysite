@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
+import base64
+import re
 import subprocess
 import tempfile
+from xml.etree import ElementTree
 
 from django.contrib.auth.models import AnonymousUser
 from django.conf import settings
@@ -39,6 +42,27 @@ class DashboardAccessTests(SimpleTestCase):
         response = backup_dashboard(request)
         self.assertEqual(response.status_code, 200)
         self.assertIn('no-store', response.headers['Cache-Control'])
+
+    @patch('backupapp.views.MonitoredService')
+    @patch('backupapp.views.BackupInvitation')
+    def test_dashboard_shows_direct_setup_link_and_local_qr(self, invitations, services):
+        invitation = SimpleNamespace(
+            user=SimpleNamespace(username='ala'), token_link='test-token',
+        )
+        invitations.objects.filter.return_value.select_related.return_value.order_by.return_value = [invitation]
+        services.objects.select_related.return_value.all.return_value.order_by.return_value = []
+        request = RequestFactory().get(reverse('backup_dashboard'))
+        request.user = SimpleNamespace(is_authenticated=True)
+        html = backup_dashboard(request).content.decode()
+        setup_url = request.build_absolute_uri(reverse('setup_phone', args=['test-token']))
+        self.assertIn(f'href="{setup_url}"', html)
+        self.assertNotIn('Kopiuj Token', html)
+        self.assertNotIn('KOPIUJ POLECENIE', html)
+        self.assertNotIn('Oznacz jako zużyte', html)
+        qr_data = re.search(r'src="data:image/svg\+xml;base64,([^"]+)"', html)
+        self.assertIsNotNone(qr_data)
+        svg = ElementTree.fromstring(base64.b64decode(qr_data.group(1)))
+        self.assertEqual(svg.tag, '{http://www.w3.org/2000/svg}svg')
 
     @patch('backupapp.views.get_object_or_404')
     @patch('backupapp.views.BackupInvitation')
