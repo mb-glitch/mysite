@@ -36,6 +36,11 @@ else
   fi
 fi
 
+# Usuń stare powiadomienie wyniku backupu, tworzone przez poprzednie wersje.
+if command -v termux-notification-remove >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  timeout 3s termux-notification-remove 999 >/dev/null 2>&1 || true
+fi
+
 TODAY=$(date +'%F')
 LOCK_FILE="$BACKUP_DIR/.last_backup_date"
 SSH_CONFIG="$BACKUP_DIR/.ssh.conf"
@@ -220,11 +225,6 @@ queue_report || exit 1
 if [ "$ALL_SUCCESS" = true ]; then printf '%s\n' "$TODAY" > "$LOCK_FILE"; fi
 DELIVERY_FAILED=0
 send_pending || DELIVERY_FAILED=1
-if [ "$ALL_SUCCESS" = true ]; then
-  termux-notification --title "Backup OK ($KTO)" --content 'Zadania zakończone pomyślnie.' --id 999 2>/dev/null || true
-else
-  termux-notification --title "Błąd backupu ($KTO)" --content "$FAILED_TASKS" --id 999 2>/dev/null || true
-fi
 rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy \
   "$LOG_DIR" "pi:$REMOTE_LOG_DIR" --fast-list -q || log 'Nie udało się przesłać logów na Pi.'
 if [ "$ALL_SUCCESS" = false ]; then exit 1; fi

@@ -25,8 +25,10 @@ class BackupRunnerTests(SimpleTestCase):
         (self.backup / '.ssh.conf').write_text('Host pi\n')
         (self.backup / '.token.conf').write_text('test-token\n')
         self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        for tool in ('ssh', 'termux-wake-lock', 'termux-wake-unlock', 'termux-notification'):
+        for tool in ('ssh', 'termux-wake-lock', 'termux-wake-unlock'):
             self.stub(tool, '#!/bin/bash\nexit 0\n')
+        self.stub('termux-notification', '#!/bin/bash\nprintf "create\\n" >> "$HOME/notification_calls"\n')
+        self.stub('termux-notification-remove', '#!/bin/bash\nprintf "remove:%s\\n" "$1" >> "$HOME/notification_calls"\n')
         self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *"/.config/backup/scripts"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
         self.stub('curl', f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
@@ -68,6 +70,15 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertTrue((self.backup / '.locks/10 success.sh.done').exists())
         self.assertFalse((self.backup / f'.locks/{name}.done').exists())
         self.assertFalse((self.backup / '.last_backup_date').exists())
+
+    def test_runner_only_removes_old_local_notification(self):
+        self.task('10 success.sh', 0)
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertEqual((self.home / 'notification_calls').read_text().splitlines(), ['remove:999'])
+        self.task('20 failure.sh', 7)
+        self.assertEqual(self.run_backup('--force').returncode, 1)
+        self.assertEqual((self.home / 'notification_calls').read_text().splitlines(), ['remove:999', 'remove:999'])
+        self.assertEqual(self.reports()[-1]['status_code'], 2)
 
     def test_failed_delivery_retried_before_daily_lock(self):
         self.task('10 success.sh', 0)
