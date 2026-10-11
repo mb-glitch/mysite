@@ -26,9 +26,13 @@ class BackupInvitationAdminForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance.pk and self.instance.token_link:
-            self.fields['service_username'].initial = Token.objects.filter(
-                key=self.instance.token_link,
-            ).values_list('user__username', flat=True).first()
+            old_account = User.objects.filter(auth_token__key=self.instance.token_link).first()
+            if old_account and not (old_account.is_staff or old_account.is_superuser or old_account.has_usable_password()):
+                self.fields['service_username'].initial = old_account.username
+            else:
+                self.fields['service_username'].help_text = (
+                    'Stare zaproszenie wskazuje konto osobiste. Podaj nazwę nowego konta technicznego bez hasła.'
+                )
         else:
             self.fields['user'].initial = User.objects.filter(
                 username='maciek',
@@ -48,10 +52,10 @@ class BackupInvitationAdminForm(forms.ModelForm):
             self.add_error('service_username', 'Konto techniczne jest wyłączone.')
             return cleaned
         if self.instance.pk and self.instance.token_link:
-            old_username = Token.objects.filter(key=self.instance.token_link).values_list(
-                'user__username', flat=True,
-            ).first()
-            if old_username != username:
+            old_account = User.objects.filter(auth_token__key=self.instance.token_link).first()
+            if old_account and old_account.username != username and not (
+                old_account.is_staff or old_account.is_superuser or old_account.has_usable_password()
+            ):
                 self.add_error('service_username', 'Konta technicznego istniejącego zaproszenia nie można zmienić.')
         service = MonitoredService.objects.filter(service_user=account).first() if account else None
         if account:
@@ -88,6 +92,7 @@ class BackupInvitationAdmin(admin.ModelAdmin):
     @transaction.atomic
     def save_model(self, request, obj, form, change):
         username = form.cleaned_data['service_username']
+        old_token_link = obj.token_link
         existing = MonitoredService.objects.filter(service_user__username=username).first()
         service, token = provision_service_account(
             owner=obj.user,
@@ -99,5 +104,7 @@ class BackupInvitationAdmin(admin.ModelAdmin):
             service.timeout_ms = 3_600_000
             service.save(update_fields=['timeout_ms'])
         obj.token_link = token.key
+        if change and old_token_link != obj.token_link:
+            obj.is_used = False
         super().save_model(request, obj, form, change)
 

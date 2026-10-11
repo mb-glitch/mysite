@@ -29,7 +29,7 @@ class BackupRunnerTests(SimpleTestCase):
             self.stub(tool, '#!/bin/bash\nexit 0\n')
         self.stub('termux-notification', '#!/bin/bash\nprintf "create\\n" >> "$HOME/notification_calls"\n')
         self.stub('termux-notification-remove', '#!/bin/bash\nprintf "remove:%s\\n" "$1" >> "$HOME/notification_calls"\n')
-        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *"/.config/backup/scripts"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
+        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\nif [[ "$*" == *"/.config/backup/scripts"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
         self.stub('curl', f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
@@ -70,6 +70,13 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertTrue((self.backup / '.locks/10 success.sh.done').exists())
         self.assertFalse((self.backup / f'.locks/{name}.done').exists())
         self.assertFalse((self.backup / '.last_backup_date').exists())
+
+    def test_unsupported_rclone_reports_error_to_monitoring(self):
+        self.stub('rclone', '#!/bin/bash\nexit 0\n')
+        self.task('10 success.sh', 0)
+        self.assertEqual(self.run_backup().returncode, 1)
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'configuration')
+        self.assertIn('rclone', self.reports()[0]['error'])
 
     def test_runner_only_removes_old_local_notification(self):
         self.task('10 success.sh', 0)
@@ -120,7 +127,7 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         shutil.copyfile(Path(__file__).parent / 'scripts/10_backup.sh', self.backup / '10_backup.sh')
         (self.backup / '.rclone-filters.conf').write_text('+ /**\n')
         self.stub('pgrep', '#!/bin/bash\nexit 1\n')
-        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *"/storage/emulated/0"* ]]; then exit 23; fi\nexit 0\n')
+        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\nif [[ "$*" == *"/storage/emulated/0"* ]]; then exit 23; fi\nexit 0\n')
         self.assertEqual(self.run_backup().returncode, 1)
         self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 23)
 
@@ -160,6 +167,7 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
     def test_autoupdate_restarts_runner_without_losing_lock(self):
         self.task('10 success.sh', 0)
         self.stub('rclone', '#!/bin/bash\n'
+                  'if [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\n'
                   'if [[ "$*" == *"/.config/backup/scripts"* ]] && [ ! -f "$HOME/updated" ]; then\n'
                   '  touch "$HOME/updated"\n'
                   '  printf "\\n# aktualizacja\\n" >> "$HOME/backup/run_backup.sh"\n'
@@ -182,6 +190,7 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         (self.backup / '.user.conf').write_text(f'KTO="test"\nDEST_BASE="{self.home / "pi"}"\n')
         self.stub('ssh', '#!/bin/bash\ncommand="${@: -1}"\nbash -c "$command"\n')
         self.stub('rclone', '#!/bin/bash\n'
+                  'if [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\n'
                   'while [ "$1" != copy ]; do shift; done\n'
                   'source="$2"; destination="$3"\n'
                   'if [[ "$source" == pi:* ]]; then\n'

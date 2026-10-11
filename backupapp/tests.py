@@ -124,6 +124,8 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertNotIn('ssh-copy-id', script)
         self.assertIn('(SSH v2)', script)
         self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
+        self.assertIn('ssh = ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pi', script)
+        self.assertIn('export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"', installed_runner)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)
         self.assertIn('pkg install -y termux-api rclone openssh jq curl util-linux', script)
@@ -131,6 +133,19 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertNotIn('--period 3600000', script)
         self.assertIn('if ! termux-job-scheduler --job-id 101', script)
         self.assertIn('BŁĄD: Nie udało się zaplanować backupu', script)
+
+    def test_backup_scripts_use_verified_openssh_for_rclone(self):
+        scripts_dir = Path(__file__).parent / 'scripts'
+        for name in ('run_backup.sh', '10_backup.sh'):
+            with self.subTest(name=name):
+                script = (scripts_dir / name).read_text()
+                syntax = subprocess.run(['bash', '-n'], input=script, text=True, capture_output=True)
+                self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                self.assertIn(
+                    'export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"',
+                    script,
+                )
+                self.assertNotIn('rclone --sftp-known-hosts-file', script)
 
     def test_installing_public_key_is_idempotent_and_sets_ssh_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -213,3 +228,47 @@ class BackupInvitationAdminTests(TestCase):
         self.assertContains(response, 'dedykowane konto techniczne bez hasła')
         self.assertFalse(BackupInvitation.objects.exists())
         self.assertFalse(MonitoredService.objects.exists())
+
+    def test_legacy_invitation_can_be_relinked_to_new_technical_account(self):
+        human = User.objects.create_user('krysia', password='test-password')
+        old_token = Token.objects.create(user=human)
+        invitation = BackupInvitation.objects.create(
+            user=human, token_link=old_token.key, is_used=True,
+        )
+        change_url = reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk])
+        response = self.client.get(change_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['adminform'].form['service_username'].value())
+
+        response = self.client.post(change_url, {
+            'user': self.owner.pk,
+            'service_username': 'svc_krysia_phone',
+            'is_used': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation.refresh_from_db()
+        account = User.objects.get(username='svc_krysia_phone')
+        self.assertEqual(invitation.user, self.owner)
+        self.assertEqual(invitation.token_link, Token.objects.get(user=account).key)
+        self.assertFalse(invitation.is_used)
+        self.assertFalse(account.has_usable_password())
+        self.assertEqual(MonitoredService.objects.get(service_user=account).owner, self.owner)
+        self.assertTrue(User.objects.get(pk=human.pk).has_usable_password())
+        self.assertTrue(Token.objects.filter(pk=old_token.pk).exists())
+        self.assertEqual(self.client.get(reverse('setup_phone', args=[old_token.key])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('setup_phone', args=[invitation.token_link])).status_code, 200)
+
+    def test_existing_technical_invitation_cannot_be_relinked(self):
+        invitation = BackupInvitation.objects.create(user=self.owner)
+        old_token_link = invitation.token_link
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk]), {
+            'user': self.owner.pk,
+            'service_username': 'svc_other_phone',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Konta technicznego istniejącego zaproszenia nie można zmienić.')
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.token_link, old_token_link)
+        self.assertFalse(User.objects.filter(username='svc_other_phone').exists())

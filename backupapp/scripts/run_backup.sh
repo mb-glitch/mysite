@@ -128,6 +128,14 @@ if [ "$ALL_SUCCESS" = false ]; then
   queue_report && send_pending
   exit 1
 fi
+if ! rclone help backend sftp 2>/dev/null | grep -- '--sftp-ssh' >/dev/null; then
+  add_failure 'configuration' 1 'Zbyt stara wersja rclone: brak obsługi zewnętrznego SSH'
+  queue_report && send_pending
+  exit 1
+fi
+
+# Rclone korzysta z tej samej konfiguracji i weryfikacji klucza hosta co ssh.
+export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"
 
 DEST_BASE="${DEST_BASE:-/media/pi/elemele}"
 REMOTE_USER_DIR="$DEST_BASE/$KTO"
@@ -172,7 +180,7 @@ termux-wake-lock 2>/dev/null || true
 trap 'termux-wake-unlock 2>/dev/null || true' EXIT
 
 RUNNER_OLD_HASH=$(md5sum "$BACKUP_DIR/run_backup.sh" | cut -d' ' -f1)
-rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy \
+rclone copy \
   "pi:$REMOTE_SCRIPT_DIR" "$BACKUP_DIR" --fast-list -q
 SYNC_CODE=$?
 if [ "$SYNC_CODE" -ne 0 ]; then add_failure 'sync_scripts' "$SYNC_CODE" 'Nie udało się pobrać skryptów z Pi'; fi
@@ -225,7 +233,7 @@ queue_report || exit 1
 if [ "$ALL_SUCCESS" = true ]; then printf '%s\n' "$TODAY" > "$LOCK_FILE"; fi
 DELIVERY_FAILED=0
 send_pending || DELIVERY_FAILED=1
-rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy \
+rclone copy \
   "$LOG_DIR" "pi:$REMOTE_LOG_DIR" --fast-list -q || log 'Nie udało się przesłać logów na Pi.'
 if [ "$ALL_SUCCESS" = false ]; then exit 1; fi
 exit "$DELIVERY_FAILED"

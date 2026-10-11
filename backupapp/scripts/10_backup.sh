@@ -51,6 +51,12 @@ if [ ! -f "$SSH_CONFIG" ]; then
   exit 1
 fi
 
+export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"
+if ! rclone help backend sftp 2>/dev/null | grep -- '--sftp-ssh' >/dev/null; then
+  echo "[$(date +'%F %T')] [10_backup.sh] [BŁĄD] Zbyt stara wersja rclone: brak obsługi zewnętrznego SSH." >> "$BACKUP_LOG"
+  exit 1
+fi
+
 # Weryfikacja pliku filtrów rclone (.rclone-filters.conf) - jak nie ma to błąd skryptu!
 if [ ! -f "$RCLONE_FILTERS_FILE" ]; then
   echo "[$(date +'%F %T')] [10_backup.sh] [BŁĄD] Brak wymaganego pliku filtrów rclone: $RCLONE_FILTERS_FILE!" >> "$BACKUP_LOG"
@@ -82,7 +88,7 @@ RCLONE_PARAMS=(
 # 5. Główny backup pamięci wewnętrznej telefonu (rclone copy - bez kasowania na Pi)
 COPY_EXIT_CODE=0
 
-if rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy "$ROOT_PATH" "$DEST_REMOTE" "${RCLONE_PARAMS[@]}"; then
+if rclone copy "$ROOT_PATH" "$DEST_REMOTE" "${RCLONE_PARAMS[@]}"; then
   :
 else
   COPY_EXIT_CODE=$?
@@ -103,7 +109,7 @@ fi
 
 if [ "$COPY_EXIT_CODE" -eq 0 ] && [ -n "${SD_CARD:-}" ] && [ -d "/storage/$SD_CARD" ]; then
   echo "[$START_TIME] [10_backup.sh] Kopiuję kartę SD ($SD_CARD)..." >> "$BACKUP_LOG"
-  if rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy "/storage/$SD_CARD" "$DEST_REMOTE/sd_card" "${RCLONE_PARAMS[@]}"; then
+  if rclone copy "/storage/$SD_CARD" "$DEST_REMOTE/sd_card" "${RCLONE_PARAMS[@]}"; then
     :
   else
     COPY_EXIT_CODE=$?

@@ -116,6 +116,10 @@ echo "=== Instalacja backupu telefonu dla: {username} (SSH v2) ==="
 export DEBIAN_FRONTEND=noninteractive
 echo "-> Instaluję wymagane pakiety Termuxa..."
 pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
+if ! rclone help backend sftp 2>/dev/null | grep -- '--sftp-ssh' >/dev/null; then
+  echo 'BŁĄD: Ta wersja rclone nie obsługuje zewnętrznego SSH. Zaktualizuj rclone w Termuxie.'
+  exit 1
+fi
 termux-setup-storage </dev/null 2>/dev/null || true
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
@@ -177,6 +181,7 @@ user = {ssh_user}
 port = 22
 key_file = ~/.ssh/id_ed25519
 known_hosts_file = ~/.ssh/known_hosts
+ssh = ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pi
 shell_type = unix
 EOF
 chmod 600 ~/.config/rclone/rclone.conf
