@@ -132,8 +132,23 @@ chmod 600 ~/.ssh/config
 
 echo "-> Autoryzacja SSH na Raspberry Pi ({ssh_user}@{server_ip}):"
 echo "Przy pierwszym połączeniu porównaj odcisk klucza hosta z kluczem Raspberry Pi, zanim go zaakceptujesz."
-ssh-copy-id -F ~/.ssh/config -o StrictHostKeyChecking=ask -i ~/.ssh/id_ed25519.pub pi < /dev/tty
+echo "-> Pierwsze połączenie: potwierdź klucz hosta i wpisz hasło użytkownika {ssh_user}."
+if ! ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=no pi true < /dev/tty; then
+  echo "BŁĄD: Nie udało się połączyć hasłem lub zweryfikować klucza hosta Pi."
+  echo "Jeśli klucz hosta się zmienił, porównaj jego odcisk na Pi przed usunięciem starego wpisu z ~/.ssh/known_hosts."
+  exit 1
+fi
+if ! ssh-keygen -F '{server_ip}' -f ~/.ssh/known_hosts >/dev/null; then
+  echo "BŁĄD: Brak potwierdzonego klucza Pi w ~/.ssh/known_hosts."
+  exit 1
+fi
 chmod 600 ~/.ssh/known_hosts
+echo "-> Wgrywam klucz logowania na Pi; w razie potrzeby wpisz hasło ponownie."
+ssh-copy-id -F ~/.ssh/config -i ~/.ssh/id_ed25519.pub pi < /dev/tty
+if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes pi true < /dev/null; then
+  echo "BŁĄD: Logowanie kluczem do Pi nie działa; nie kończę instalacji."
+  exit 1
+fi
 ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes pi "umask 077; mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'; chmod 700 '/media/pi/elemele/{username}/.config/backup' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'" < /dev/null
 
 BACKUP_DIR="$HOME/backup"
