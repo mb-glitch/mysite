@@ -28,6 +28,30 @@
         </p>
       {% endif %}
 
+      <h3>Wiadomości i ogłoszenia · ostatnie 10</h3>
+      {% if item.activity %}
+        <ol class="activity-list">
+          {% for entry in item.activity %}
+            <li>
+              <div class="activity-meta">{{ entry.kind }} · {{ entry.date|date:"Y-m-d H:i" }}{% if entry.sender %} · {{ entry.sender }}{% endif %}</div>
+              <details><summary>{{ entry.title|default:"(bez tytułu)" }}</summary><div class="content">{{ entry.content|default:"Brak treści"|linebreaksbr }}</div></details>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}<p class="muted">Brak wiadomości i ogłoszeń.</p>{% endif %}
+
+      <h3>Ostatnie 10 ocen</h3>
+      {% if item.recent_grades %}
+        <div class="table-wrap"><table class="recent-grades-table">
+          <thead><tr><th>Data</th><th>Przedmiot i opis</th><th>Ocena</th></tr></thead>
+          <tbody>{% for grade in item.recent_grades %}<tr>
+            <td class="date">{{ grade.data|date:"Y-m-d" }}</td>
+            <td>{{ grade.przedmiot }}{% if grade.opis %}<div class="muted">{{ grade.opis }}</div>{% endif %}</td>
+            <td><strong>{{ grade.wartosc }}</strong></td>
+          </tr>{% endfor %}</tbody>
+        </table></div>
+      {% else %}<p class="muted">Brak aktualnych ocen.</p>{% endif %}
+
       <h3>Podsumowanie ocen</h3>
       {% if item.grade_summary.subjects %}
         <div class="table-wrap"><table class="summary-table">
@@ -43,30 +67,6 @@
       {% else %}
         <p class="muted">Archiwizacja semestralna: jeszcze nieuruchomiona. Po zakończeniu semestru uruchom ją ręcznie z wybraną datą.</p>
       {% endif %}
-
-      <h3>Ostatnie 10 ocen</h3>
-      {% if item.recent_grades %}
-        <div class="table-wrap"><table class="recent-grades-table">
-          <thead><tr><th>Data</th><th>Przedmiot i opis</th><th>Ocena</th></tr></thead>
-          <tbody>{% for grade in item.recent_grades %}<tr>
-            <td class="date">{{ grade.data|date:"Y-m-d" }}</td>
-            <td>{{ grade.przedmiot }}{% if grade.opis %}<div class="muted">{{ grade.opis }}</div>{% endif %}</td>
-            <td><strong>{{ grade.wartosc }}</strong></td>
-          </tr>{% endfor %}</tbody>
-        </table></div>
-      {% else %}<p class="muted">Brak aktualnych ocen.</p>{% endif %}
-
-      <h3>Wiadomości i ogłoszenia · ostatnie 10</h3>
-      {% if item.activity %}
-        <ol class="activity-list">
-          {% for entry in item.activity %}
-            <li>
-              <div class="activity-meta">{{ entry.kind }} · {{ entry.date|date:"Y-m-d H:i" }}{% if entry.sender %} · {{ entry.sender }}{% endif %}</div>
-              <details><summary>{{ entry.title|default:"(bez tytułu)" }}</summary><div class="content">{{ entry.content|default:"Brak treści"|linebreaksbr }}</div></details>
-            </li>
-          {% endfor %}
-        </ol>
-      {% else %}<p class="muted">Brak wiadomości i ogłoszeń.</p>{% endif %}
     </section>
   {% empty %}
     <section><h2>Dzieci</h2><p class="muted">Brak dzieci przypisanych do Librusa.</p></section>
