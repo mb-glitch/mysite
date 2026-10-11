@@ -10,6 +10,7 @@ from rest_framework.authtoken.models import Token
 
 from monitoring.models import MonitoredService
 from monitoring.services import provision_service_account
+from mysite.admin_filters import ArchiveFilter
 from .models import BackupInvitation
 
 
@@ -21,11 +22,12 @@ class BackupInvitationAdminForm(forms.ModelForm):
 
     class Meta:
         model = BackupInvitation
-        fields = ('user', 'is_used')
+        fields = ('user', 'is_used', 'is_archived')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance.pk and self.instance.token_link:
+            self.fields['service_username'].required = False
             old_account = User.objects.filter(auth_token__key=self.instance.token_link).first()
             if old_account and not (old_account.is_staff or old_account.is_superuser or old_account.has_usable_password()):
                 self.fields['service_username'].initial = old_account.username
@@ -42,7 +44,16 @@ class BackupInvitationAdminForm(forms.ModelForm):
         cleaned = super().clean()
         owner = cleaned.get('user')
         username = cleaned.get('service_username', '').strip()
+        if self.instance.pk and cleaned.get('is_archived'):
+            old_username = Token.objects.filter(key=self.instance.token_link).values_list(
+                'user__username', flat=True,
+            ).first()
+            if username and old_username and username != old_username:
+                self.add_error('service_username', 'Podczas archiwizacji nie zmieniaj konta technicznego.')
+            return cleaned
         if not owner or not username:
+            if owner and not username:
+                self.add_error('service_username', 'Podaj konto techniczne.')
             return cleaned
         account = User.objects.filter(username=username).first()
         if account and (account.is_staff or account.is_superuser or account.has_usable_password()):
@@ -78,9 +89,9 @@ class BackupInvitationAdminForm(forms.ModelForm):
 @admin.register(BackupInvitation)
 class BackupInvitationAdmin(admin.ModelAdmin):
     form = BackupInvitationAdminForm
-    fields = ('user', 'service_username', 'token_link', 'is_used', 'created_at')
-    list_display = ('user', 'technical_account', 'is_used', 'created_at')
-    list_filter = ('is_used', 'created_at')
+    fields = ('user', 'service_username', 'token_link', 'is_used', 'is_archived', 'created_at')
+    list_display = ('user', 'technical_account', 'is_used', 'is_archived', 'created_at')
+    list_filter = (ArchiveFilter, 'is_used', 'created_at')
     search_fields = ('user__username', 'token_link')
     readonly_fields = ('token_link', 'created_at')
     ordering = ('is_used', 'user__username')
@@ -91,6 +102,9 @@ class BackupInvitationAdmin(admin.ModelAdmin):
 
     @transaction.atomic
     def save_model(self, request, obj, form, change):
+        if change and obj.is_archived:
+            super().save_model(request, obj, form, change)
+            return
         username = form.cleaned_data['service_username']
         old_token_link = obj.token_link
         existing = MonitoredService.objects.filter(service_user__username=username).first()

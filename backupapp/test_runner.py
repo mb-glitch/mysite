@@ -1,4 +1,4 @@
-"""Testy rzeczywistego runnera z atrapami sieci i narzędzi Termux."""
+"""Testy jednego skryptu backupu z atrapami sieci i narzędzi Termuxa."""
 import json
 import os
 from pathlib import Path
@@ -20,16 +20,41 @@ class BackupRunnerTests(SimpleTestCase):
         self.backup.mkdir()
         self.bin = self.home / 'bin'
         self.bin.mkdir()
-        shutil.copyfile(Path(__file__).parent / 'scripts/run_backup.sh', self.backup / 'run_backup.sh')
+        self.storage = self.home / 'storage'
+        (self.storage / 'emulated/0').mkdir(parents=True)
+        self.runner = self.backup / 'run_backup.sh'
+        shutil.copyfile(Path(__file__).parent / 'scripts/run_backup.sh', self.runner)
+        self.remote_runner = self.home / 'remote_runner.sh'
+        shutil.copyfile(self.runner, self.remote_runner)
         (self.backup / '.user.conf').write_text('KTO="test"\n')
         (self.backup / '.ssh.conf').write_text('Host pi\n')
+        (self.backup / '.rclone-filters.conf').write_text('+ /**\n')
         (self.backup / '.token.conf').write_text('test-token\n')
-        self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
+        self.env = dict(
+            os.environ, HOME=str(self.home), BACKUP_STORAGE_ROOT=str(self.storage),
+            PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
+        )
         for tool in ('ssh', 'termux-wake-lock', 'termux-wake-unlock'):
             self.stub(tool, '#!/bin/bash\nexit 0\n')
-        self.stub('termux-notification', '#!/bin/bash\nprintf "create\\n" >> "$HOME/notification_calls"\n')
         self.stub('termux-notification-remove', '#!/bin/bash\nprintf "remove:%s\\n" "$1" >> "$HOME/notification_calls"\n')
-        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\nif [[ "$*" == *"/.config/backup/scripts"* ]]; then exit "${SYNC_EXIT:-0}"; fi\nexit 0\n')
+        self.stub('rclone', '''#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/rclone_calls"
+if [[ "$*" == 'help backend sftp' ]]; then echo '--sftp-ssh'; exit 0; fi
+if [[ "$1" == copyto ]]; then
+  if [ "${SYNC_EXIT:-0}" -ne 0 ]; then exit "$SYNC_EXIT"; fi
+  cp "$HOME/remote_runner.sh" "$3"
+  exit $?
+fi
+if [[ "$1" == copy && "$2" == "$BACKUP_STORAGE_ROOT/emulated/0" ]]; then
+  if [ "${BACKUP_WAIT:-0}" = 1 ]; then
+    touch "$HOME/backup_started"
+    until [ -f "$HOME/release_backup" ]; do sleep 0.05; done
+  fi
+  exit "${BACKUP_EXIT:-0}"
+fi
+if [[ "$1" == copy && "$2" == "$BACKUP_STORAGE_ROOT/card" ]]; then exit "${SD_EXIT:-0}"; fi
+exit 0
+''')
         self.stub('curl', f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
@@ -47,48 +72,56 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         path.write_text(content)
         path.chmod(0o700)
 
-    def task(self, name, code):
-        (self.backup / name).write_text(f'#!/bin/bash\nexit {code}\n')
-
     def run_backup(self, *args):
-        return subprocess.run(['bash', str(self.backup / 'run_backup.sh'), *args], env=self.env, capture_output=True, timeout=10)
+        return subprocess.run(['bash', str(self.runner), *args], env=self.env, capture_output=True, timeout=10)
 
     def reports(self):
         path = self.home / 'requests.jsonl'
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
-    def test_task_error_contains_name_and_actual_exit_code(self):
-        name = '20 backup "błąd" \\ plik.sh'
-        self.task(name, 23)
-        self.task('10 success.sh', 0)
-        self.assertEqual(self.run_backup().returncode, 1)
-        payload = self.reports()[0]
-        self.assertEqual(payload['status_code'], 2)
-        self.assertEqual(payload['failed_tasks'][0]['script'], name)
-        self.assertEqual(payload['failed_tasks'][0]['exit_code'], 23)
-        self.assertIn('kod: 23', payload['error'])
-        self.assertTrue((self.backup / '.locks/10 success.sh.done').exists())
-        self.assertFalse((self.backup / f'.locks/{name}.done').exists())
-        self.assertFalse((self.backup / '.last_backup_date').exists())
+    def rclone_calls(self):
+        path = self.home / 'rclone_calls'
+        return path.read_text().splitlines() if path.exists() else []
 
-    def test_unsupported_rclone_reports_error_to_monitoring(self):
-        self.stub('rclone', '#!/bin/bash\nexit 0\n')
-        self.task('10 success.sh', 0)
+    def test_single_script_copies_phone_and_ignores_other_shell_files(self):
+        rogue = self.backup / 'another_task.sh'
+        rogue.write_text('#!/bin/bash\ntouch "$HOME/rogue_executed"\n')
+        legacy = self.backup / '10_backup.sh'
+        legacy.write_text('#!/bin/bash\ntouch "$HOME/legacy_executed"\n')
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertFalse((self.home / 'rogue_executed').exists())
+        self.assertFalse((self.home / 'legacy_executed').exists())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.reports()[0]['status_code'], 0)
+        self.assertTrue((self.backup / '.last_backup_date').exists())
+        self.assertTrue(any('copyto pi:/media/pi/elemele/test/.config/backup/scripts/run_backup.sh' in call for call in self.rclone_calls()))
+        self.assertEqual(sum(call.startswith('copy ') and str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
+
+    def test_backup_error_reports_actual_exit_code_and_retries_next_time(self):
+        self.env['BACKUP_EXIT'] = '23'
+        self.assertEqual(self.run_backup().returncode, 1)
+        failure = self.reports()[0]['failed_tasks'][0]
+        self.assertEqual((failure['script'], failure['exit_code']), ('backup_phone', 23))
+        self.assertFalse((self.backup / '.last_backup_date').exists())
+        self.env['BACKUP_EXIT'] = '0'
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertTrue((self.backup / '.last_backup_date').exists())
+
+    def test_sd_card_error_is_reported(self):
+        (self.storage / 'card').mkdir()
+        (self.backup / '.user.conf').write_text('KTO="test"\nSD_CARD="card"\n')
+        self.env['SD_EXIT'] = '42'
+        self.assertEqual(self.run_backup().returncode, 1)
+        failure = self.reports()[0]['failed_tasks'][0]
+        self.assertEqual((failure['script'], failure['exit_code']), ('backup_sd', 42))
+
+    def test_missing_filters_is_error_and_skips_copy(self):
+        (self.backup / '.rclone-filters.conf').unlink()
         self.assertEqual(self.run_backup().returncode, 1)
         self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'configuration')
-        self.assertIn('rclone', self.reports()[0]['error'])
-
-    def test_runner_only_removes_old_local_notification(self):
-        self.task('10 success.sh', 0)
-        self.assertEqual(self.run_backup().returncode, 0)
-        self.assertEqual((self.home / 'notification_calls').read_text().splitlines(), ['remove:999'])
-        self.task('20 failure.sh', 7)
-        self.assertEqual(self.run_backup('--force').returncode, 1)
-        self.assertEqual((self.home / 'notification_calls').read_text().splitlines(), ['remove:999', 'remove:999'])
-        self.assertEqual(self.reports()[-1]['status_code'], 2)
+        self.assertFalse(any(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()))
 
     def test_failed_delivery_retried_before_daily_lock(self):
-        self.task('10 success.sh', 0)
         self.env['HTTP_STATUS'] = '503'
         self.assertEqual(self.run_backup().returncode, 1)
         self.assertEqual(len(list((self.backup / '.monitoring-pending').glob('*.json'))), 1)
@@ -96,128 +129,62 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertEqual(self.run_backup().returncode, 0)
         self.assertEqual(len(self.reports()), 2)
         self.assertEqual(list((self.backup / '.monitoring-pending').glob('*.json')), [])
+        self.assertEqual(sum(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
 
-    def test_transport_error_is_retained(self):
-        self.task('10 success.sh', 0)
-        self.env.update(HTTP_STATUS='000', CURL_EXIT='7')
+    def test_unsupported_rclone_reports_error(self):
+        self.stub('rclone', '#!/bin/bash\nexit 0\n')
         self.assertEqual(self.run_backup().returncode, 1)
-        self.assertEqual(len(list((self.backup / '.monitoring-pending').glob('*.json'))), 1)
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'configuration')
 
-    def test_missing_tasks_is_error(self):
-        self.assertEqual(self.run_backup().returncode, 1)
-        self.assertEqual(self.reports()[0]['status_code'], 2)
-        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'tasks')
-
-    def test_sync_error_is_not_hidden(self):
-        self.task('10 success.sh', 0)
+    def test_sync_error_does_not_hide_successful_copy(self):
         self.env['SYNC_EXIT'] = '12'
         self.assertEqual(self.run_backup().returncode, 1)
         self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 12)
+        self.assertTrue(any(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()))
+        self.assertFalse((self.backup / '.last_backup_date').exists())
 
-    def test_successful_task_is_not_repeated_after_sibling_failure(self):
-        self.task('10 success.sh', 0)
-        self.task('20 failure.sh', 9)
+    def test_incompatible_remote_script_is_not_installed(self):
+        self.remote_runner.write_text('#!/bin/bash\nexit 0\n')
         self.assertEqual(self.run_backup().returncode, 1)
-        self.task('10 success.sh', 99)
-        self.task('20 failure.sh', 0)
+        self.assertIn('# BACKUP_SINGLE_TASK_V1', self.runner.read_text())
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'sync_script')
+
+    def test_autoupdate_restarts_once_and_keeps_lock(self):
+        self.remote_runner.write_text(self.remote_runner.read_text() + '\n# aktualizacja\n')
         self.assertEqual(self.run_backup().returncode, 0)
-        self.assertEqual(self.reports()[-1]['status_code'], 0)
+        self.assertIn('# aktualizacja', self.runner.read_text())
+        self.assertEqual(len(self.reports()), 1)
+        self.assertEqual(self.runner.stat().st_mode & 0o777, 0o700)
 
-    def test_worker_preserves_rclone_exit_code(self):
-        shutil.copyfile(Path(__file__).parent / 'scripts/10_backup.sh', self.backup / '10_backup.sh')
-        (self.backup / '.rclone-filters.conf').write_text('+ /**\n')
-        self.stub('pgrep', '#!/bin/bash\nexit 1\n')
-        self.stub('rclone', '#!/bin/bash\nif [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\nif [[ "$*" == *"/storage/emulated/0"* ]]; then exit 23; fi\nexit 0\n')
-        self.assertEqual(self.run_backup().returncode, 1)
-        self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 23)
-
-    def test_second_runner_skips_while_first_is_executing_a_task(self):
-        marker = self.home / 'task_started'
-        release = self.home / 'release_task'
-        self.task('10 wait.sh', 0)
-        (self.backup / '10 wait.sh').write_text(
-            '#!/bin/bash\n'
-            'touch "$HOME/task_started"\n'
-            'until [ -f "$HOME/release_task" ]; do sleep 0.05; done\n'
-        )
-        first = subprocess.Popen(
-            ['bash', str(self.backup / 'run_backup.sh')], env=self.env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+    def test_second_runner_skips_while_first_is_copying(self):
+        self.env['BACKUP_WAIT'] = '1'
+        first = subprocess.Popen(['bash', str(self.runner)], env=self.env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 5
-            while not marker.exists() and time.monotonic() < deadline:
+            while not (self.home / 'backup_started').exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
-            self.assertTrue(marker.exists(), 'Pierwszy runner nie rozpoczął zadania')
+            self.assertTrue((self.home / 'backup_started').exists())
             self.assertIsNone(first.poll())
             self.assertEqual(self.run_backup().returncode, 0)
             self.assertEqual(self.reports(), [])
-            self.assertIn(
-                'Inna instancja run_backup.sh',
-                (self.backup / 'logs/backup.log').read_text(),
-            )
+            self.assertIn('Inna instancja run_backup.sh', (self.backup / 'logs/backup.log').read_text())
         finally:
-            release.touch()
+            (self.home / 'release_backup').touch()
             first.wait(timeout=5)
         self.assertEqual(first.returncode, 0)
         self.assertEqual(len(self.reports()), 1)
-        self.assertEqual(self.run_backup('--force').returncode, 0)
-        self.assertEqual(len(self.reports()), 2)
 
-    def test_autoupdate_restarts_runner_without_losing_lock(self):
-        self.task('10 success.sh', 0)
-        self.stub('rclone', '#!/bin/bash\n'
-                  'if [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\n'
-                  'if [[ "$*" == *"/.config/backup/scripts"* ]] && [ ! -f "$HOME/updated" ]; then\n'
-                  '  touch "$HOME/updated"\n'
-                  '  printf "\\n# aktualizacja\\n" >> "$HOME/backup/run_backup.sh"\n'
-                  'fi\n'
-                  'exit 0\n')
-        self.assertEqual(self.run_backup().returncode, 0)
-        self.assertTrue((self.home / 'updated').exists())
-        self.assertEqual(len(self.reports()), 1)
-        self.assertEqual((self.backup / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
-
-    def test_legacy_pi_files_are_copied_and_new_paths_are_used(self):
-        pi_root = self.home / 'pi' / 'test'
-        old_scripts = pi_root / '.skrypty'
-        old_logs = pi_root / 'logs'
-        old_scripts.mkdir(parents=True)
-        old_logs.mkdir()
-        shutil.copyfile(self.backup / 'run_backup.sh', old_scripts / 'run_backup.sh')
-        (old_scripts / '10 from pi.sh').write_text('#!/bin/bash\nexit 0\n')
-        (old_logs / 'history.log').write_text('stary wpis\n')
-        (self.backup / '.user.conf').write_text(f'KTO="test"\nDEST_BASE="{self.home / "pi"}"\n')
-        self.stub('ssh', '#!/bin/bash\ncommand="${@: -1}"\nbash -c "$command"\n')
-        self.stub('rclone', '#!/bin/bash\n'
-                  'if [[ "$*" == "help backend sftp" ]]; then echo "--sftp-ssh"; exit 0; fi\n'
-                  'while [ "$1" != copy ]; do shift; done\n'
-                  'source="$2"; destination="$3"\n'
-                  'if [[ "$source" == pi:* ]]; then\n'
-                  '  cp -R "${source#pi:}/." "$destination/"\n'
-                  'elif [[ "$destination" == pi:* ]]; then\n'
-                  '  mkdir -p "${destination#pi:}"\n'
-                  '  cp -R "$source/." "${destination#pi:}/"\n'
-                  'fi\n')
-        self.assertEqual(self.run_backup().returncode, 0)
-        new_root = pi_root / '.config' / 'backup'
-        self.assertTrue((new_root / 'scripts' / '10 from pi.sh').exists())
-        self.assertEqual((new_root / 'scripts' / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
-        self.assertTrue((self.backup / '10 from pi.sh').exists())
-        self.assertEqual((self.backup / 'run_backup.sh').stat().st_mode & 0o777, 0o700)
-        self.assertEqual((new_root / 'logs' / 'history.log').read_text(), 'stary wpis\n')
-        self.assertTrue((new_root / 'logs' / 'backup.log').exists())
-        self.assertTrue(old_scripts.exists())
-        self.assertTrue(old_logs.exists())
-        self.assertEqual(new_root.stat().st_mode & 0o777, 0o700)
-
-    def test_remote_directory_error_is_reported_without_running_tasks(self):
-        self.task('10 success.sh', 0)
-        self.stub('ssh', '#!/bin/bash\n'
-                  'if [ "${@: -1}" = true ]; then exit 0; fi\n'
-                  'exit 13\n')
+    def test_remote_directory_error_is_reported(self):
+        self.stub('ssh', '#!/bin/bash\nif [ "${@: -1}" = true ]; then exit 0; fi\nexit 13\n')
         self.assertEqual(self.run_backup().returncode, 1)
-        self.assertEqual(self.reports()[0]['status_code'], 2)
-        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'prepare_remote')
-        self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 13)
-        self.assertFalse((self.backup / '.locks/10 success.sh.done').exists())
+        failure = self.reports()[0]['failed_tasks'][0]
+        self.assertEqual((failure['script'], failure['exit_code']), ('prepare_remote', 13))
+        self.assertFalse(any(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()))
+
+    def test_backup_destination_error_reports_ssh_exit_code(self):
+        self.stub('ssh', '#!/bin/bash\n[[ "${@: -1}" == *"_backup_tel_sync"* ]] && exit 13\nexit 0\n')
+        self.assertEqual(self.run_backup().returncode, 1)
+        failure = self.reports()[0]['failed_tasks'][0]
+        self.assertEqual((failure['script'], failure['exit_code']), ('backup_destination', 13))
+        self.assertFalse(any(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()))

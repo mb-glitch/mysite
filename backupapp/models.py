@@ -38,6 +38,10 @@ class BackupInvitation(models.Model):
         default=False,
         verbose_name="Czy użyty / skonfigurowany"
     )
+    is_archived = models.BooleanField(
+        default=False, verbose_name="W archiwum",
+        help_text="Ukryj zaproszenie i wyłącz jego link instalacyjny.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

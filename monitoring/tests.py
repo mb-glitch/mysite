@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -155,6 +155,56 @@ class MonitoringTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['cl'].result_count, 1100)
         self.assertEqual(len(response.context['cl'].result_list), 50)
+
+    @patch('monitoring.models.send_mail')
+    def test_archive_hides_service_and_logs_without_revoking_token(self, send_mail):
+        self.owner.email = 'owner@example.com'
+        self.owner.save(update_fields=['email'])
+        admin = User.objects.create_superuser('admin', 'admin@example.com', 'test-password')
+        admin_client = Client()
+        admin_client.force_login(admin)
+        change_url = reverse('admin:monitoring_monitoredservice_change', args=[self.service.pk])
+        response = admin_client.post(change_url, {
+            'owner': self.owner.pk,
+            'service_user': self.service.service_user_id,
+            'service_name': self.service.service_name,
+            'timeout_ms': self.service.timeout_ms,
+            'is_active': 'on',
+            'is_archived': 'on',
+            'token_enabled': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.service.refresh_from_db()
+        self.assertTrue(self.service.is_archived)
+        self.assertEqual(self.service.status, 3)
+        self.assertEqual(self.client.post(self.url).status_code, 201)
+        call_command('monitoring_sprawdz')
+        send_mail.assert_not_called()
+
+        service_list = reverse('admin:monitoring_monitoredservice_changelist')
+        log_list = reverse('admin:monitoring_logentry_changelist')
+        for url in (service_list, log_list):
+            self.assertEqual(admin_client.get(url).context['cl'].result_count, 0)
+            self.assertEqual(admin_client.get(url, {'archive': 'archived'}).context['cl'].result_count, 1)
+            self.assertEqual(admin_client.get(url, {'archive': 'all'}).context['cl'].result_count, 1)
+        admin_client.force_login(self.owner)
+        self.assertEqual(admin_client.get(reverse('backup_dashboard')).context['services'], [])
+
+        admin_client.force_login(admin)
+        response = admin_client.post(change_url, {
+            'owner': self.owner.pk,
+            'service_user': self.service.service_user_id,
+            'service_name': self.service.service_name,
+            'timeout_ms': self.service.timeout_ms,
+            'is_active': 'on',
+            'token_enabled': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.service.refresh_from_db()
+        self.assertFalse(self.service.is_archived)
+        self.assertEqual(admin_client.get(service_list).context['cl'].result_count, 1)
 
     def test_intervals_and_deadlines_are_the_same_on_weekdays_and_weekends(self):
         log = LogEntry.objects.create(service=self.service)

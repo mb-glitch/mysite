@@ -28,9 +28,9 @@ except ImportError:
     LogEntry = None
 
 SCRIPT_DIR = getattr(settings, 'BASE_DIR', Path('.')) / "backupapp" / "scripts"
-SCRIPT_PATH = SCRIPT_DIR / "10_backup.sh"
+SCRIPT_PATH = SCRIPT_DIR / "run_backup.sh"
 RCLONE_CONF_PATH = SCRIPT_DIR / "rclone.conf"
-SCRIPT_VERSION = "2026-10-11 monitoring reports"
+SCRIPT_VERSION = "2026-10-11 single backup task"
 SSH_KEY_INSTALL_COMMAND = (
     'set -eu; umask 077; mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; '
     'touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"; '
@@ -80,7 +80,7 @@ def setup_phone(request, token):
     Token należy do konta technicznego (np. svc_maciek_backup).
     """
     token_obj = get_object_or_404(Token.objects.select_related('user'), key=token, user__is_active=True)
-    invitation = get_object_or_404(BackupInvitation.objects.select_related('user'), token_link=token_obj.key)
+    invitation = get_object_or_404(BackupInvitation.objects.select_related('user'), token_link=token_obj.key, is_archived=False)
     if token_obj.user.is_staff or token_obj.user.is_superuser or token_obj.user.has_usable_password():
         raise Http404('Zaproszenie wymaga konta technicznego.')
     get_object_or_404(MonitoredService, service_user=token_obj.user, owner=invitation.user, is_active=True)
@@ -138,9 +138,9 @@ chmod 600 ~/.ssh/config
 
 echo "-> Autoryzacja SSH na Raspberry Pi ({ssh_user}@{server_ip}):"
 echo "Przy pierwszym połączeniu porównaj odcisk klucza hosta z kluczem Raspberry Pi, zanim go zaakceptujesz."
-echo "-> Pierwsze połączenie: potwierdź klucz hosta i wpisz hasło użytkownika {ssh_user}."
-if ! ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=no pi true < /dev/tty; then
-  echo "BŁĄD: Nie udało się połączyć hasłem lub zweryfikować klucza hosta Pi."
+echo "-> Potwierdź klucz hosta i wpisz hasło użytkownika {ssh_user}; od razu wgram klucz logowania."
+if ! ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=no pi '{SSH_KEY_INSTALL_COMMAND}' < "$HOME/.ssh/id_ed25519.pub"; then
+  echo "BŁĄD: Nie udało się wgrać klucza logowania lub zweryfikować klucza hosta Pi."
   echo "Jeśli klucz hosta się zmienił, porównaj jego odcisk na Pi przed usunięciem starego wpisu z ~/.ssh/known_hosts."
   exit 1
 fi
@@ -149,8 +149,6 @@ if ! ssh-keygen -F '{server_ip}' -f ~/.ssh/known_hosts >/dev/null; then
   exit 1
 fi
 chmod 600 ~/.ssh/known_hosts
-echo "-> Wgrywam klucz logowania na Pi; w razie potrzeby wpisz hasło ponownie."
-ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no pi '{SSH_KEY_INSTALL_COMMAND}' < "$HOME/.ssh/id_ed25519.pub"
 if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes pi true < /dev/null; then
   echo "BŁĄD: Logowanie kluczem do Pi nie działa; nie kończę instalacji."
   exit 1
@@ -204,6 +202,13 @@ cat > "$BACKUP_DIR/run_backup.sh" << 'RUNNER_EOF'
 RUNNER_EOF
 chmod +x "$BACKUP_DIR/run_backup.sh"
 
+REMOTE_RUNNER='/media/pi/elemele/{username}/.config/backup/scripts/run_backup.sh'
+if ! ssh -F ~/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=yes pi "grep -qFx '# BACKUP_SINGLE_TASK_V1' '$REMOTE_RUNNER' && bash -n '$REMOTE_RUNNER'" < /dev/null; then
+  echo '-> Umieszczam pojedynczy skrypt backupu na Pi.'
+  rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q
+  ssh -F ~/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=yes pi "chmod 700 '$REMOTE_RUNNER.next' && mv -f '$REMOTE_RUNNER.next' '$REMOTE_RUNNER'" < /dev/null
+fi
+
 termux-job-scheduler --cancel --job-id 101 2>/dev/null || true
 if ! termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period-ms 3600000 --network unmetered --persisted true; then
   echo "BŁĄD: Nie udało się zaplanować backupu. Sprawdź instalację aplikacji Termux:API."
@@ -223,11 +228,11 @@ echo "=== GOTOWE! Backup dla {username} skonfigurowany. ==="
 
 
 def claim_invitation(request, token):
-    invitation = BackupInvitation.objects.filter(token_link=token).first()
+    invitation = BackupInvitation.objects.filter(token_link=token, is_archived=False).first()
     if not invitation:
         token_obj = Token.objects.filter(key=token).first()
         if token_obj:
-            invitation = BackupInvitation.objects.filter(token_link=token_obj.key).first()
+            invitation = BackupInvitation.objects.filter(token_link=token_obj.key, is_archived=False).first()
 
     if invitation:
         invitation.is_used = True
@@ -246,11 +251,11 @@ def backup_dashboard(request):
     Pulpit domowników:
     Prezentuje listę zaproszeń oraz stan usług pobrany z MonitoredService.
     """
-    active_invites = BackupInvitation.objects.filter(is_used=False).select_related('user').order_by('user__username')
+    active_invites = BackupInvitation.objects.filter(is_used=False, is_archived=False).select_related('user').order_by('user__username')
     services_data = []
 
     if MonitoredService:
-        services = MonitoredService.objects.select_related('owner', 'service_user').all().order_by('owner__username', 'service_name')
+        services = MonitoredService.objects.filter(is_archived=False).select_related('owner', 'service_user').order_by('owner__username', 'service_name')
         for s in services:
             latest_log = s.logs.order_by('-checked_at', '-pk').first()
             service_status = s.status

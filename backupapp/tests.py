@@ -119,8 +119,10 @@ class DashboardAccessTests(SimpleTestCase):
         key_copy = script.index(f"pi '{SSH_KEY_INSTALL_COMMAND}' < \"$HOME/.ssh/id_ed25519.pub\"")
         key_connect = script.index('ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey')
         self.assertLess(password_connect, host_record_check)
-        self.assertLess(host_record_check, key_copy)
-        self.assertLess(key_copy, key_connect)
+        self.assertLess(password_connect, key_copy)
+        self.assertLess(key_copy, host_record_check)
+        self.assertLess(host_record_check, key_connect)
+        self.assertEqual(script.count('PreferredAuthentications=password,keyboard-interactive'), 1)
         self.assertNotIn('ssh-copy-id', script)
         self.assertIn('(SSH v2)', script)
         self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
@@ -129,23 +131,24 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)
         self.assertIn('pkg install -y termux-api rclone openssh jq curl util-linux', script)
+        self.assertIn('rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q', script)
+        self.assertIn("grep -qFx '# BACKUP_SINGLE_TASK_V1'", script)
         self.assertIn('--period-ms 3600000', script)
         self.assertNotIn('--period 3600000', script)
         self.assertIn('if ! termux-job-scheduler --job-id 101', script)
         self.assertIn('BŁĄD: Nie udało się zaplanować backupu', script)
 
-    def test_backup_scripts_use_verified_openssh_for_rclone(self):
+    def test_backup_uses_one_script_and_verified_openssh_for_rclone(self):
         scripts_dir = Path(__file__).parent / 'scripts'
-        for name in ('run_backup.sh', '10_backup.sh'):
-            with self.subTest(name=name):
-                script = (scripts_dir / name).read_text()
-                syntax = subprocess.run(['bash', '-n'], input=script, text=True, capture_output=True)
-                self.assertEqual(syntax.returncode, 0, syntax.stderr)
-                self.assertIn(
-                    'export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"',
-                    script,
-                )
-                self.assertNotIn('rclone --sftp-known-hosts-file', script)
+        self.assertFalse((scripts_dir / '10_backup.sh').exists())
+        script = (scripts_dir / 'run_backup.sh').read_text()
+        syntax = subprocess.run(['bash', '-n'], input=script, text=True, capture_output=True)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        self.assertIn(
+            'export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"',
+            script,
+        )
+        self.assertNotIn('rclone --sftp-known-hosts-file', script)
 
     def test_installing_public_key_is_idempotent_and_sets_ssh_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -272,3 +275,52 @@ class BackupInvitationAdminTests(TestCase):
         invitation.refresh_from_db()
         self.assertEqual(invitation.token_link, old_token_link)
         self.assertFalse(User.objects.filter(username='svc_other_phone').exists())
+
+    def test_archived_invitation_is_hidden_and_can_be_restored(self):
+        invitation = BackupInvitation.objects.create(user=self.owner)
+        account = Token.objects.get(key=invitation.token_link).user
+        change_url = reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk])
+        response = self.client.post(change_url, {
+            'user': self.owner.pk,
+            'service_username': account.username,
+            'is_archived': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation.refresh_from_db()
+        self.assertTrue(invitation.is_archived)
+        invitation_list = reverse('admin:backupapp_backupinvitation_changelist')
+        self.assertEqual(self.client.get(invitation_list).context['cl'].result_count, 0)
+        self.assertEqual(self.client.get(invitation_list, {'archive': 'archived'}).context['cl'].result_count, 1)
+        self.assertEqual(self.client.get(invitation_list, {'archive': 'all'}).context['cl'].result_count, 1)
+        self.assertEqual(self.client.get(reverse('backup_dashboard')).context['invitations'], [])
+        setup_url = reverse('setup_phone', args=[invitation.token_link])
+        self.assertEqual(self.client.get(setup_url).status_code, 404)
+
+        response = self.client.post(change_url, {
+            'user': self.owner.pk,
+            'service_username': account.username,
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation.refresh_from_db()
+        self.assertFalse(invitation.is_archived)
+        self.assertEqual(self.client.get(invitation_list).context['cl'].result_count, 1)
+        self.assertEqual(self.client.get(setup_url).status_code, 200)
+
+    def test_legacy_personal_account_invitation_can_be_archived_without_rebinding(self):
+        human = User.objects.create_user('krysia', password='test-password')
+        token = Token.objects.create(user=human)
+        invitation = BackupInvitation.objects.create(user=human, token_link=token.key)
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk]), {
+            'user': human.pk,
+            'service_username': '',
+            'is_archived': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation.refresh_from_db()
+        self.assertTrue(invitation.is_archived)
+        self.assertEqual(invitation.token_link, token.key)
+        self.assertTrue(human.has_usable_password())
+        self.assertFalse(MonitoredService.objects.filter(service_user=human).exists())

@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Dyspozytor zadań backupu; raporty niewysłane pozostają w .monitoring-pending.
+# BACKUP_SINGLE_TASK_V1
+# Jeden skrypt: aktualizacja, kopia telefonu i raportowanie do monitoringu.
 set -u
 umask 077
 
@@ -149,18 +150,12 @@ if ! ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o ConnectTimeout=3 -o Ba
   exit "$DELIVERY_FAILED"
 fi
 
-# Jednorazowo skopiuj stare pliki do nowej lokalizacji, bez nadpisywania
-# skryptów i logów już tam umieszczonych. Stare katalogi zostają do czasu,
-# aż wszystkie zainstalowane telefony przejdą na nową wersję runnera.
+# Przygotuj katalogi na Pi i jednorazowo zachowaj starsze logi.
 if ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o BatchMode=yes pi "
   set -e
   umask 077
   mkdir -p '$REMOTE_SCRIPT_DIR' '$REMOTE_LOG_DIR' &&
   chmod 700 '$REMOTE_BACKUP_DIR' '$REMOTE_SCRIPT_DIR' '$REMOTE_LOG_DIR' &&
-  if [ -d '$REMOTE_USER_DIR/.skrypty' ] && [ ! -e '$REMOTE_BACKUP_DIR/.legacy-scripts-imported' ]; then
-    cp -Rn '$REMOTE_USER_DIR/.skrypty/.' '$REMOTE_SCRIPT_DIR/' &&
-    touch '$REMOTE_BACKUP_DIR/.legacy-scripts-imported' || exit 1
-  fi
   if [ -d '$REMOTE_USER_DIR/logs' ] && [ ! -e '$REMOTE_BACKUP_DIR/.legacy-logs-imported' ]; then
     cp -Rn '$REMOTE_USER_DIR/logs/.' '$REMOTE_LOG_DIR/' &&
     touch '$REMOTE_BACKUP_DIR/.legacy-logs-imported' || exit 1
@@ -179,16 +174,23 @@ fi
 termux-wake-lock 2>/dev/null || true
 trap 'termux-wake-unlock 2>/dev/null || true' EXIT
 
-RUNNER_OLD_HASH=$(md5sum "$BACKUP_DIR/run_backup.sh" | cut -d' ' -f1)
-rclone copy \
-  "pi:$REMOTE_SCRIPT_DIR" "$BACKUP_DIR" --fast-list -q
-SYNC_CODE=$?
-if [ "$SYNC_CODE" -ne 0 ]; then add_failure 'sync_scripts' "$SYNC_CODE" 'Nie udało się pobrać skryptów z Pi'; fi
-if ! chmod 700 "$BACKUP_DIR/run_backup.sh"; then
-  add_failure 'runner_permissions' 1 'Nie można nadać uprawnień wykonywania run_backup.sh'
-  queue_report && send_pending
-  exit 1
+UPDATED_SCRIPT=$(mktemp "$BACKUP_DIR/.run_backup-XXXXXX") || exit 1
+if rclone copyto "pi:$REMOTE_SCRIPT_DIR/run_backup.sh" "$UPDATED_SCRIPT" -q; then
+  if ! grep -qFx '# BACKUP_SINGLE_TASK_V1' "$UPDATED_SCRIPT" || ! bash -n "$UPDATED_SCRIPT"; then
+    add_failure 'sync_script' 1 'Skrypt na Pi jest niezgodny albo ma błąd składni'
+  elif ! cmp -s "$BACKUP_DIR/run_backup.sh" "$UPDATED_SCRIPT"; then
+    if chmod 700 "$UPDATED_SCRIPT" && mv -f "$UPDATED_SCRIPT" "$BACKUP_DIR/run_backup.sh"; then
+      UPDATED_SCRIPT=''
+      BACKUP_RUNNER_REEXEC=1 exec bash "$BACKUP_DIR/run_backup.sh" "$@"
+    else
+      add_failure 'sync_script' 1 'Nie udało się zainstalować run_backup.sh'
+    fi
+  fi
+else
+  code=$?
+  add_failure 'sync_script' "$code" 'Nie udało się pobrać run_backup.sh z Pi'
 fi
+[ -z "$UPDATED_SCRIPT" ] || rm -f "$UPDATED_SCRIPT"
 
 mkdir -p "$HOME/.config/rclone" "$HOME/.ssh"
 for config in .rclone.conf rclone.conf; do
@@ -202,31 +204,50 @@ if [ -f "$SSH_CONFIG" ]; then
   cp "$SSH_CONFIG" "$HOME/.ssh/config"
   chmod 600 "$HOME/.ssh/config"
 fi
-RUNNER_NEW_HASH=$(md5sum "$BACKUP_DIR/run_backup.sh" | cut -d' ' -f1)
-if [ "$SYNC_CODE" -eq 0 ] && [ "$RUNNER_OLD_HASH" != "$RUNNER_NEW_HASH" ]; then
-  BACKUP_RUNNER_REEXEC=1 exec bash "$BACKUP_DIR/run_backup.sh" "$@"
-fi
-
-FOUND_ANY=false
-for script in "$BACKUP_DIR"/*.sh; do
-  [ -f "$script" ] || continue
-  script_name=$(basename "$script")
-  [ "$script_name" = 'run_backup.sh' ] && continue
-  FOUND_ANY=true
-  script_lock="$LOCK_DIR/$script_name.done"
-  if [ "$FORCE" = false ] && [ -f "$script_lock" ] && [ "$(cat "$script_lock")" = "$TODAY" ]; then
-    log "Pomijam $script_name: już wykonany dzisiaj."
-    continue
-  fi
-  log "Uruchamiam $script_name."
-  if bash "$script" "$@"; then
-    printf '%s\n' "$TODAY" > "$script_lock"
+FILTERS_FILE="$BACKUP_DIR/.rclone-filters.conf"
+PHONE_STORAGE_ROOT="${BACKUP_STORAGE_ROOT:-/storage}"
+if [ ! -f "$FILTERS_FILE" ]; then
+  add_failure 'configuration' 1 'Brak .rclone-filters.conf'
+else
+  DEST_PATH="$REMOTE_USER_DIR/_backup_tel_sync"
+  if ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o ConnectTimeout=3 -o BatchMode=yes pi "mkdir -p '$DEST_PATH'"; then
+    RCLONE_PARAMS=(--filter-from "$FILTERS_FILE" --transfers 4 --fast-list --modify-window 2s --retries 3 -q)
+    log "Rozpoczynam kopię telefonu ($KTO)."
+    if rclone copy "$PHONE_STORAGE_ROOT/emulated/0" "pi:$DEST_PATH" "${RCLONE_PARAMS[@]}"; then
+      log 'Kopia pamięci telefonu zakończona.'
+      if [ -z "${SD_CARD:-}" ]; then
+        if [ -f /proc/mounts ]; then
+          SD_DETECTED=$(grep -oE '/storage/[0-9A-Za-z_-]+' /proc/mounts 2>/dev/null | grep -vE '/storage/(emulated|self)' | head -n1 || true)
+          [ -n "$SD_DETECTED" ] && SD_CARD=$(basename "$SD_DETECTED")
+        fi
+        if [ -z "${SD_CARD:-}" ]; then
+          SD_DETECTED=$(df 2>/dev/null | grep -oE '/storage/[0-9A-Za-z_-]+' | grep -vE '/storage/(emulated|self)' | head -n1 || true)
+          [ -n "$SD_DETECTED" ] && SD_CARD=$(basename "$SD_DETECTED")
+        fi
+      fi
+      if [ -n "${SD_CARD:-}" ] && [ -d "$PHONE_STORAGE_ROOT/$SD_CARD" ]; then
+        log "Kopiuję kartę SD ($SD_CARD)."
+        if rclone copy "$PHONE_STORAGE_ROOT/$SD_CARD" "pi:$DEST_PATH/sd_card" "${RCLONE_PARAMS[@]}"; then
+          log 'Kopia karty SD zakończona.'
+        else
+          code=$?
+          add_failure 'backup_sd' "$code" 'Kopia karty SD nie powiodła się'
+        fi
+      fi
+    else
+      code=$?
+      add_failure 'backup_phone' "$code" 'Kopia pamięci telefonu nie powiodła się; szczegóły w backup.log'
+    fi
   else
     code=$?
-    add_failure "$script_name" "$code" 'Zadanie zakończyło się błędem; szczegóły w backup.log'
+    add_failure 'backup_destination' "$code" 'Nie udało się przygotować katalogu kopii na Pi'
   fi
-done
-if [ "$FOUND_ANY" = false ]; then add_failure 'tasks' 1 'Nie znaleziono żadnych skryptów roboczych'; fi
+fi
+
+# Po udanej kopii usuń wycofany skrypt roboczy z telefonu.
+if [ "$ALL_SUCCESS" = true ]; then
+  rm -f "$BACKUP_DIR/10_backup.sh" "$LOCK_DIR/10_backup.sh.done"
+fi
 
 # Najpierw zapisz raport; blokada dzienna nie może zgubić nieprzekazanego wyniku.
 queue_report || exit 1

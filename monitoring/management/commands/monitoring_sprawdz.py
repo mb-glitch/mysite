@@ -10,7 +10,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         logger.info("--- START PROGRAMU ---")
 
-        for m in MonitoredService.objects.all():
+        for m in MonitoredService.objects.filter(is_archived=False):
             try:
                 logger.info(m)
                 m.sprawdz_status_i_wyslij_powiadomienie()

@@ -77,6 +77,10 @@ class MonitoredService(models.Model):
     )
 
     is_active = models.BooleanField(default=True, verbose_name="Czy usługa aktywna")
+    is_archived = models.BooleanField(
+        default=False, verbose_name="W archiwum",
+        help_text="Ukryj z bieżących list i wyłącz alerty. Token nadal przyjmuje raporty.",
+    )
     timeout_ms = models.IntegerField(
         default=60_000, validators=[MinValueValidator(1)],
         help_text="Oczekiwany odstęp między raportami w milisekundach",
@@ -111,7 +115,7 @@ class MonitoredService(models.Model):
         return dict(self.INTERVAL_CHOICES).get(self.timeout_ms, f"{self.timeout_ms} ms")
 
     def _get_monitoring_status(self):
-        if not self.is_active or (self.service_user and not self.service_user.is_active):
+        if self.is_archived or not self.is_active or (self.service_user and not self.service_user.is_active):
             return 3
         latest_log = self.logs.order_by('-checked_at', '-pk').first()
         if not latest_log:
@@ -149,6 +153,8 @@ class MonitoredService(models.Model):
 
     def sprawdz_status_i_wyslij_powiadomienie(self):
         """Wysyła e-mail przy awarii do opiekuna oraz grupy Monitoring."""
+        if self.is_archived:
+            return False
         current_status = self._get_monitoring_status()
 
         if current_status != self.last_status:

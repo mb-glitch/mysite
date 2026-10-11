@@ -8,7 +8,13 @@ from django import forms
 from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from django.utils import timezone
+from mysite.admin_filters import ArchiveFilter
 from .models import MonitoredService, LogEntry
+
+
+class ArchivedServiceFilter(ArchiveFilter):
+    title = 'Archiwum usługi'
+    field_path = 'service__is_archived'
 
 
 class MonitoredServiceForm(forms.ModelForm):
@@ -48,10 +54,11 @@ class MonitoredServiceAdmin(admin.ModelAdmin):
         'status_display',
         'last_status_display',
         'is_active',
+        'is_archived',
         'token_enabled',
         'last_check_at',
     )
-    list_filter = ('is_active', 'service_name', 'last_status', 'owner')
+    list_filter = (ArchiveFilter, 'is_active', 'service_name', 'last_status', 'owner')
     search_fields = ('service_name', 'service_user__username', 'owner__username', 'description')
     readonly_fields = ('recent_logs',)
 
@@ -91,7 +98,7 @@ class MonitoredServiceAdmin(admin.ModelAdmin):
 @admin.register(LogEntry)
 class LogEntryAdmin(admin.ModelAdmin):
     list_display = ('service', 'status_code', 'checked_at')
-    list_filter = ('service', 'status_code')
+    list_filter = (ArchivedServiceFilter, 'service', 'status_code')
     ordering = ('-checked_at', '-pk')
     list_per_page = 50
     readonly_fields = ('service', 'status_code', 'checked_at', 'message')
