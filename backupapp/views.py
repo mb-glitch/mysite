@@ -4,6 +4,7 @@
 # Onboarding telefonów z użyciem Tokenu konta maszynowego DRF
 # ==============================================================================
 import base64
+import hashlib
 from pathlib import Path
 
 import qrcode
@@ -29,8 +30,7 @@ except ImportError:
 
 SCRIPT_DIR = getattr(settings, 'BASE_DIR', Path('.')) / "backupapp" / "scripts"
 SCRIPT_PATH = SCRIPT_DIR / "run_backup.sh"
-RCLONE_CONF_PATH = SCRIPT_DIR / "rclone.conf"
-SCRIPT_VERSION = "2026-10-11 single backup task"
+DEFAULT_MONITOR_URL = 'https://host109829.xce.pl/api/monitoring/'
 SSH_KEY_INSTALL_COMMAND = (
     'set -eu; umask 077; mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; '
     'touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"; '
@@ -45,7 +45,20 @@ SSH_KEY_INSTALL_COMMAND = (
 @permission_classes([IsAuthenticated])
 def backup_script_info(request):
     script_url = request.build_absolute_uri(reverse('backup-core'))
-    return JsonResponse({"latest_version": SCRIPT_VERSION, "script_url": script_url})
+    try:
+        content = current_runner_script()
+    except FileNotFoundError:
+        return JsonResponse({"error": "run_backup.sh not found"}, status=404)
+    return JsonResponse({
+        "latest_version": hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        "script_url": script_url,
+    })
+
+
+def current_runner_script():
+    content = SCRIPT_PATH.read_text(encoding='utf-8')
+    monitor_url = getattr(settings, 'URL_MONITORING', DEFAULT_MONITOR_URL)
+    return content.replace(DEFAULT_MONITOR_URL, monitor_url)
 
 
 @api_view(['GET'])
@@ -53,24 +66,12 @@ def backup_script_info(request):
 @permission_classes([IsAuthenticated])
 def get_backup_script(request):
     try:
-        with open(SCRIPT_PATH, 'r', encoding='utf-8') as f:
-            content = f.read()
+        content = current_runner_script()
         response = HttpResponse(content, content_type='text/x-sh; charset=utf-8')
         response['Cache-Control'] = 'no-cache'
         return response
     except FileNotFoundError:
         return HttpResponse("Script not found", status=404)
-
-
-def get_rclone_conf(request):
-    try:
-        with open(RCLONE_CONF_PATH, 'r', encoding='utf-8') as f:
-            content = f.read()
-        response = HttpResponse(content, content_type='text/x-sh; charset=utf-8')
-        response['Cache-Control'] = 'no-cache'
-        return response
-    except FileNotFoundError:
-        return HttpResponse("rclone.conf not found", status=404)
 
 
 @never_cache
@@ -103,11 +104,7 @@ def setup_phone(request, token):
     ssh_user = getattr(settings, 'BACKUP_PI_USER', 'smerf')
     status_url = request.build_absolute_uri(reverse('claim_invitation', args=[token]))
     script_url = request.build_absolute_uri(reverse('setup_phone', args=[token]))
-    # Monitoring ZAWSZE na stały zewnętrzny/wewnętrzny URL produkcyjny:
-    monitor_url = getattr(settings, 'URL_MONITORING', 'https://host109829.xce.pl/api/monitoring/')
-
-    runner_script = (SCRIPT_DIR / 'run_backup.sh').read_text(encoding='utf-8')
-    runner_script = runner_script.replace('https://host109829.xce.pl/api/monitoring/', monitor_url)
+    runner_script = current_runner_script()
 
     bash_script = f"""#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
@@ -116,10 +113,6 @@ echo "=== Instalacja backupu telefonu dla: {username} (SSH v2) ==="
 export DEBIAN_FRONTEND=noninteractive
 echo "-> Instaluję wymagane pakiety Termuxa..."
 pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
-if ! rclone help backend sftp 2>/dev/null | grep -- '--sftp-ssh' >/dev/null; then
-  echo 'BŁĄD: Ta wersja rclone nie obsługuje zewnętrznego SSH. Zaktualizuj rclone w Termuxie.'
-  exit 1
-fi
 termux-setup-storage </dev/null 2>/dev/null || true
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
@@ -131,29 +124,22 @@ Host pi
     User {ssh_user}
     Port 22
     IdentityFile ~/.ssh/id_ed25519
-    StrictHostKeyChecking yes
-    UserKnownHostsFile ~/.ssh/known_hosts
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
 SSHEOF
 chmod 600 ~/.ssh/config
 
 echo "-> Autoryzacja SSH na Raspberry Pi ({ssh_user}@{server_ip}):"
-echo "Przy pierwszym połączeniu porównaj odcisk klucza hosta z kluczem Raspberry Pi, zanim go zaakceptujesz."
-echo "-> Potwierdź klucz hosta i wpisz hasło użytkownika {ssh_user}; od razu wgram klucz logowania."
-if ! ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=no pi '{SSH_KEY_INSTALL_COMMAND}' < "$HOME/.ssh/id_ed25519.pub"; then
-  echo "BŁĄD: Nie udało się wgrać klucza logowania lub zweryfikować klucza hosta Pi."
-  echo "Jeśli klucz hosta się zmienił, porównaj jego odcisk na Pi przed usunięciem starego wpisu z ~/.ssh/known_hosts."
+echo "-> Wpisz hasło użytkownika {ssh_user}; od razu wgram klucz logowania."
+if ! ssh -F ~/.ssh/config -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=no pi '{SSH_KEY_INSTALL_COMMAND}' < "$HOME/.ssh/id_ed25519.pub"; then
+  echo "BŁĄD: Nie udało się wgrać klucza logowania na Pi."
   exit 1
 fi
-if ! ssh-keygen -F '{server_ip}' -f ~/.ssh/known_hosts >/dev/null; then
-  echo "BŁĄD: Brak potwierdzonego klucza Pi w ~/.ssh/known_hosts."
-  exit 1
-fi
-chmod 600 ~/.ssh/known_hosts
-if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes pi true < /dev/null; then
+if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes pi true < /dev/null; then
   echo "BŁĄD: Logowanie kluczem do Pi nie działa; nie kończę instalacji."
   exit 1
 fi
-ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes pi "umask 077; mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'; chmod 700 '/media/pi/elemele/{username}/.config/backup' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'" < /dev/null
+ssh -F ~/.ssh/config pi "umask 077; mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'; chmod 700 '/media/pi/elemele/{username}/.config/backup' '/media/pi/elemele/{username}/.config/backup/scripts' '/media/pi/elemele/{username}/.config/backup/logs'" < /dev/null
 
 BACKUP_DIR="$HOME/backup"
 mkdir -p "$BACKUP_DIR" ~/.config/rclone
@@ -178,8 +164,7 @@ host = {server_ip}
 user = {ssh_user}
 port = 22
 key_file = ~/.ssh/id_ed25519
-known_hosts_file = ~/.ssh/known_hosts
-ssh = ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pi
+known_hosts_file = none
 shell_type = unix
 EOF
 chmod 600 ~/.config/rclone/rclone.conf
@@ -203,11 +188,9 @@ RUNNER_EOF
 chmod +x "$BACKUP_DIR/run_backup.sh"
 
 REMOTE_RUNNER='/media/pi/elemele/{username}/.config/backup/scripts/run_backup.sh'
-if ! ssh -F ~/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=yes pi "grep -qFx '# BACKUP_SINGLE_TASK_V1' '$REMOTE_RUNNER' && bash -n '$REMOTE_RUNNER'" < /dev/null; then
-  echo '-> Umieszczam pojedynczy skrypt backupu na Pi.'
-  rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q
-  ssh -F ~/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=yes pi "chmod 700 '$REMOTE_RUNNER.next' && mv -f '$REMOTE_RUNNER.next' '$REMOTE_RUNNER'" < /dev/null
-fi
+echo '-> Umieszczam aktualny run_backup.sh na Pi.'
+rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q
+ssh -F ~/.ssh/config -o BatchMode=yes pi "bash -n '$REMOTE_RUNNER.next' && chmod 700 '$REMOTE_RUNNER.next' && mv -f '$REMOTE_RUNNER.next' '$REMOTE_RUNNER'" < /dev/null
 
 termux-job-scheduler --cancel --job-id 101 2>/dev/null || true
 if ! termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period-ms 3600000 --network unmetered --persisted true; then

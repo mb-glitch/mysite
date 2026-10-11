@@ -39,7 +39,6 @@ class BackupRunnerTests(SimpleTestCase):
         self.stub('termux-notification-remove', '#!/bin/bash\nprintf "remove:%s\\n" "$1" >> "$HOME/notification_calls"\n')
         self.stub('rclone', '''#!/bin/bash
 printf '%s\n' "$*" >> "$HOME/rclone_calls"
-if [[ "$*" == 'help backend sftp' ]]; then echo '--sftp-ssh'; exit 0; fi
 if [[ "$1" == copyto ]]; then
   if [ "${SYNC_EXIT:-0}" -ne 0 ]; then exit "$SYNC_EXIT"; fi
   cp "$HOME/remote_runner.sh" "$3"
@@ -91,11 +90,39 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertEqual(self.run_backup().returncode, 0)
         self.assertFalse((self.home / 'rogue_executed').exists())
         self.assertFalse((self.home / 'legacy_executed').exists())
-        self.assertFalse(legacy.exists())
+        self.assertTrue(legacy.exists())
         self.assertEqual(self.reports()[0]['status_code'], 0)
         self.assertTrue((self.backup / '.last_backup_date').exists())
         self.assertTrue(any('copyto pi:/media/pi/elemele/test/.config/backup/scripts/run_backup.sh' in call for call in self.rclone_calls()))
-        self.assertEqual(sum(call.startswith('copy ') and str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
+        phone_copies = [call for call in self.rclone_calls() if call.startswith('copy ') and str(self.storage / 'emulated/0') in call]
+        self.assertEqual(len(phone_copies), 1)
+        self.assertIn('--transfers 4', phone_copies[0])
+        self.assertNotIn('--sftp-disable-hashcheck', phone_copies[0])
+
+    def test_existing_phone_switches_back_to_builtin_sftp_before_sync(self):
+        (self.backup / '.ssh.conf').write_text(
+            'Host pi\n    StrictHostKeyChecking yes\n    UserKnownHostsFile ~/.ssh/known_hosts\n'
+        )
+        (self.backup / '.rclone.conf').write_text(
+            '[pi]\ntype = sftp\nknown_hosts_file = ~/.ssh/known_hosts\n'
+            'ssh = ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pi\n'
+            '[other]\nssh = custom-ssh\n'
+        )
+        self.env['RCLONE_SFTP_SSH'] = 'ssh pi'
+        self.stub('rclone', '''#!/bin/bash
+config="$HOME/.config/rclone/rclone.conf"
+if [ "$1" = copyto ]; then
+  grep -q '^known_hosts_file = none$' "$config" || exit 21
+  grep -q '^ssh = ssh ' "$config" && exit 22
+  [ -z "${RCLONE_SFTP_SSH:-}" ] || exit 23
+  cp "$HOME/remote_runner.sh" "$3"
+fi
+exit 0
+''')
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertIn('StrictHostKeyChecking no', (self.backup / '.ssh.conf').read_text())
+        self.assertIn('UserKnownHostsFile /dev/null', (self.backup / '.ssh.conf').read_text())
+        self.assertIn('ssh = custom-ssh', (self.backup / '.rclone.conf').read_text())
 
     def test_backup_error_reports_actual_exit_code_and_retries_next_time(self):
         self.env['BACKUP_EXIT'] = '23'
@@ -131,10 +158,10 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertEqual(list((self.backup / '.monitoring-pending').glob('*.json')), [])
         self.assertEqual(sum(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
 
-    def test_unsupported_rclone_reports_error(self):
+    def test_rclone_does_not_need_external_ssh_support(self):
         self.stub('rclone', '#!/bin/bash\nexit 0\n')
         self.assertEqual(self.run_backup().returncode, 1)
-        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'configuration')
+        self.assertEqual(self.reports()[0]['failed_tasks'][0]['script'], 'sync_script')
 
     def test_sync_error_does_not_hide_successful_copy(self):
         self.env['SYNC_EXIT'] = '12'
@@ -155,8 +182,25 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.assertIn('# aktualizacja', self.runner.read_text())
         self.assertEqual(len(self.reports()), 1)
         self.assertEqual(self.runner.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(sum(call.startswith('copyto ') for call in self.rclone_calls()), 1)
+
+    def test_update_after_daily_backup_does_not_repeat_copy(self):
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.remote_runner.write_text(self.remote_runner.read_text() + '\n# nowa wersja\n')
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertIn('# nowa wersja', self.runner.read_text())
+        self.assertEqual(len(self.reports()), 1)
+        self.assertEqual(sum(str(self.storage / 'emulated/0') in call for call in self.rclone_calls()), 1)
+
+    def test_unavailable_pi_skips_backup_without_success_report(self):
+        self.stub('ssh', '#!/bin/bash\nexit 255\n')
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertEqual(self.rclone_calls(), [])
+        self.assertEqual(self.reports(), [])
+        self.assertFalse((self.backup / '.last_backup_date').exists())
 
     def test_second_runner_skips_while_first_is_copying(self):
+        self.remote_runner.write_text(self.remote_runner.read_text() + '\n# aktualizacja przed kopią\n')
         self.env['BACKUP_WAIT'] = '1'
         first = subprocess.Popen(['bash', str(self.runner)], env=self.env,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

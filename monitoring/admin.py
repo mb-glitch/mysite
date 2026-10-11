@@ -4,12 +4,13 @@
 # Panel Service Accounts i historii logów
 # ==============================================================================
 from django.contrib import admin
+from django.contrib.auth.models import User
 from django import forms
 from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from django.utils import timezone
 from mysite.admin_filters import ArchiveFilter
-from .models import MonitoredService, LogEntry
+from .models import MonitoredService, LogEntry, is_dedicated_service_account
 
 
 class ArchivedServiceFilter(ArchiveFilter):
@@ -61,6 +62,34 @@ class MonitoredServiceAdmin(admin.ModelAdmin):
     list_filter = (ArchiveFilter, 'is_active', 'service_name', 'last_status', 'owner')
     search_fields = ('service_name', 'service_user__username', 'owner__username', 'description')
     readonly_fields = ('recent_logs',)
+
+    def get_deleted_objects(self, objs, request):
+        deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
+        # Raporty są częścią usługi; ich administrator blokuje tylko samodzielne usuwanie.
+        permissions.discard(LogEntry._meta.verbose_name)
+        for service in objs:
+            account = service.service_user
+            if account and is_dedicated_service_account(account):
+                if not request.user.has_perm('auth.delete_user'):
+                    permissions.add(User._meta.verbose_name)
+                deleted.append(f'Konto techniczne: {account.username} (wraz z tokenem)')
+                counts['Konta techniczne'] = counts.get('Konta techniczne', 0) + 1
+                invitation = getattr(account, 'backup_invitation', None)
+                if invitation:
+                    if not request.user.has_perm('backupapp.delete_backupinvitation'):
+                        permissions.add(invitation._meta.verbose_name)
+                    deleted.append(f'Zaproszenie do instalacji: {invitation.pk}')
+                    counts['Zaproszenia do instalacji'] = counts.get('Zaproszenia do instalacji', 0) + 1
+        return deleted, counts, permissions, protected
+
+    def delete_model(self, request, obj):
+        obj.delete()
+
+    def delete_queryset(self, request, queryset):
+        for pk in list(queryset.values_list('pk', flat=True)):
+            service = MonitoredService.objects.filter(pk=pk).first()
+            if service:
+                service.delete()
 
     @admin.display(description='Ostatnie 15 raportów')
     def recent_logs(self, obj):

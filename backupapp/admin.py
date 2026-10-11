@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from rest_framework.authtoken.models import Token
 
-from monitoring.models import MonitoredService
+from monitoring.models import MonitoredService, is_dedicated_service_account
 from monitoring.services import provision_service_account
 from mysite.admin_filters import ArchiveFilter
 from .models import BackupInvitation
@@ -99,6 +99,32 @@ class BackupInvitationAdmin(admin.ModelAdmin):
     @admin.display(description='Konto techniczne')
     def technical_account(self, obj):
         return Token.objects.filter(key=obj.token_link).values_list('user__username', flat=True).first() or '—'
+
+    def get_deleted_objects(self, objs, request):
+        deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
+        for invitation in objs:
+            account = invitation.technical_user
+            if account and is_dedicated_service_account(account):
+                if not request.user.has_perm('auth.delete_user'):
+                    permissions.add(User._meta.verbose_name)
+                deleted.append(f'Konto techniczne: {account.username} (wraz z tokenem)')
+                counts['Konta techniczne'] = counts.get('Konta techniczne', 0) + 1
+                service = MonitoredService.objects.filter(service_user=account).first()
+                if service:
+                    if not request.user.has_perm('monitoring.delete_monitoredservice'):
+                        permissions.add(MonitoredService._meta.verbose_name)
+                    deleted.append(f'Usługa monitoringu: {service.service_name} (wraz z raportami)')
+                    counts['Usługi monitoringu'] = counts.get('Usługi monitoringu', 0) + 1
+        return deleted, counts, permissions, protected
+
+    def delete_model(self, request, obj):
+        obj.delete()
+
+    def delete_queryset(self, request, queryset):
+        for pk in list(queryset.values_list('pk', flat=True)):
+            invitation = BackupInvitation.objects.filter(pk=pk).first()
+            if invitation:
+                invitation.delete()
 
     @transaction.atomic
     def save_model(self, request, obj, form, change):

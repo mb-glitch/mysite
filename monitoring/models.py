@@ -26,6 +26,10 @@ def get_default_owner():
     return first_user.id if first_user else 1
 
 
+def is_dedicated_service_account(user):
+    return bool(user and not user.is_staff and not user.is_superuser and not user.has_usable_password())
+
+
 class MonitoredService(models.Model):
     """
     Konto maszynowe (Service Account) w standardzie DRF.
@@ -98,6 +102,12 @@ class MonitoredService(models.Model):
         owner_name = getattr(self.owner, 'username', 'brak')
         svc_name = getattr(self.service_user, 'username', 'tworzenie...')
         return f"{self.service_name} [{svc_name}] -> nadzorca: {owner_name}"
+
+    def delete(self, *args, **kwargs):
+        account = self.service_user
+        if account and is_dedicated_service_account(account):
+            return account.delete()
+        return super().delete(*args, **kwargs)
 
     @property
     def token(self):

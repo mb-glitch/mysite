@@ -6,6 +6,8 @@
 import secrets
 from django.db import models, transaction
 from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+from monitoring.models import is_dedicated_service_account
 from monitoring.services import provision_service_account
 
 
@@ -33,6 +35,15 @@ class BackupInvitation(models.Model):
         blank=True,
         unique=True,
         verbose_name="Token DRF konta maszynowego"
+    )
+    technical_user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='backup_invitation',
+        verbose_name='Dedykowane konto techniczne',
     )
     is_used = models.BooleanField(
         default=False,
@@ -62,7 +73,17 @@ class BackupInvitation(models.Model):
             )
             self.token_link = token_obj.key
 
+        token = Token.objects.select_related('user').filter(key=self.token_link).first()
+        self.technical_user = token.user if token and is_dedicated_service_account(token.user) else None
+
         super().save(*args, **kwargs)
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        account = self.technical_user
+        if account and is_dedicated_service_account(account):
+            return account.delete()
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         status = 'UŻYTY' if self.is_used else 'AKTYWNY (do instalacji)'

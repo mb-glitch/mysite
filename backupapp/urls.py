@@ -14,6 +14,5 @@ urlpatterns = [
     path('claim/<str:token>/', views.claim_invitation, name='claim_invitation'),
     path('api/info/', views.backup_script_info, name='backup-info'),
     path('api/script/', views.get_backup_script, name='backup-core'),
-    path('api/rclone/', views.get_rclone_conf, name='backup-rclone'),
 ]
 

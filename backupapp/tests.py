@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 import base64
+import hashlib
 import re
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ from django.test import SimpleTestCase, RequestFactory, TestCase
 from django.urls import reverse
 from rest_framework.authtoken.models import Token
 
-from monitoring.models import MonitoredService
+from monitoring.models import LogEntry, MonitoredService
 from .models import BackupInvitation
 
 from .views import SSH_KEY_INSTALL_COMMAND, backup_dashboard, setup_phone
@@ -112,43 +113,39 @@ class DashboardAccessTests(SimpleTestCase):
             config_file.write_text(ssh_config)
             result = subprocess.run(['ssh', '-G', '-F', str(config_file), 'pi'], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('stricthostkeychecking true', result.stdout)
-        self.assertNotIn('StrictHostKeyChecking=no', script)
-        password_connect = script.index('ssh -F ~/.ssh/config -o StrictHostKeyChecking=ask -o PreferredAuthentications=password,keyboard-interactive')
-        host_record_check = script.index(f"ssh-keygen -F '{getattr(settings, 'BACKUP_PI_HOST', '192.168.0.131')}' -f ~/.ssh/known_hosts")
+            self.assertIn('stricthostkeychecking false', result.stdout)
+            self.assertIn('userknownhostsfile /dev/null', result.stdout)
+        password_connect = script.index('ssh -F ~/.ssh/config -o PreferredAuthentications=password,keyboard-interactive')
         key_copy = script.index(f"pi '{SSH_KEY_INSTALL_COMMAND}' < \"$HOME/.ssh/id_ed25519.pub\"")
         key_connect = script.index('ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey')
-        self.assertLess(password_connect, host_record_check)
         self.assertLess(password_connect, key_copy)
-        self.assertLess(key_copy, host_record_check)
-        self.assertLess(host_record_check, key_connect)
+        self.assertLess(key_copy, key_connect)
         self.assertEqual(script.count('PreferredAuthentications=password,keyboard-interactive'), 1)
         self.assertNotIn('ssh-copy-id', script)
         self.assertIn('(SSH v2)', script)
-        self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
-        self.assertIn('ssh = ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pi', script)
-        self.assertIn('export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"', installed_runner)
+        self.assertIn('known_hosts_file = none', script)
+        self.assertNotIn('ssh = ssh -o BatchMode=yes', script)
+        self.assertIn('unset RCLONE_SFTP_SSH', installed_runner)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)
         self.assertIn('pkg install -y termux-api rclone openssh jq curl util-linux', script)
-        self.assertIn('rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q', script)
-        self.assertIn("grep -qFx '# BACKUP_SINGLE_TASK_V1'", script)
+        installer_tail = script.split('\nRUNNER_EOF\n', 1)[1]
+        self.assertIn('rclone copyto "$BACKUP_DIR/run_backup.sh" "pi:$REMOTE_RUNNER.next" -q', installer_tail)
+        self.assertIn("bash -n '$REMOTE_RUNNER.next' && chmod 700", installer_tail)
+        self.assertNotIn("grep -qFx '# BACKUP_SINGLE_TASK_V1'", installer_tail)
         self.assertIn('--period-ms 3600000', script)
         self.assertNotIn('--period 3600000', script)
         self.assertIn('if ! termux-job-scheduler --job-id 101', script)
         self.assertIn('BŁĄD: Nie udało się zaplanować backupu', script)
 
-    def test_backup_uses_one_script_and_verified_openssh_for_rclone(self):
+    def test_backup_uses_one_script_and_builtin_sftp_for_rclone(self):
         scripts_dir = Path(__file__).parent / 'scripts'
         self.assertFalse((scripts_dir / '10_backup.sh').exists())
         script = (scripts_dir / 'run_backup.sh').read_text()
         syntax = subprocess.run(['bash', '-n'], input=script, text=True, capture_output=True)
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
-        self.assertIn(
-            'export RCLONE_SFTP_SSH="ssh -F $SSH_CONFIG -o BatchMode=yes -o StrictHostKeyChecking=yes pi"',
-            script,
-        )
-        self.assertNotIn('rclone --sftp-known-hosts-file', script)
+        self.assertIn('unset RCLONE_SFTP_SSH', script)
+        self.assertNotIn('--sftp-disable-hashcheck', script)
 
     def test_installing_public_key_is_idempotent_and_sets_ssh_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -192,6 +189,16 @@ class BackupInvitationAdminTests(TestCase):
         self.assertFalse(account.has_usable_password())
         self.assertEqual(invitation.token_link, Token.objects.get(user=account).key)
         self.assertEqual(self.client.get(reverse('setup_phone', args=[invitation.token_link])).status_code, 200)
+
+    def test_script_api_reports_hash_of_current_installer_script(self):
+        invitation = BackupInvitation.objects.create(user=self.owner)
+        authorization = {'HTTP_AUTHORIZATION': f'Token {invitation.token_link}'}
+        response = self.client.get(reverse('backup-core'), **authorization)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('BACKUP_SINGLE_TASK_V1', response.content.decode())
+        info = self.client.get(reverse('backup-info'), **authorization)
+        self.assertEqual(info.status_code, 200)
+        self.assertEqual(info.json()['latest_version'], hashlib.sha256(response.content).hexdigest())
 
     def test_existing_orphan_invitation_can_be_linked_to_chosen_owner(self):
         account = User.objects.create_user('krysia', password=None)
@@ -324,3 +331,58 @@ class BackupInvitationAdminTests(TestCase):
         self.assertEqual(invitation.token_link, token.key)
         self.assertTrue(human.has_usable_password())
         self.assertFalse(MonitoredService.objects.filter(service_user=human).exists())
+
+
+class BackupDeletionTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser('admin', 'admin@example.com', 'test-password')
+        self.owner = User.objects.create_user('maciek')
+        self.client.force_login(self.admin)
+        self.invitation = BackupInvitation.objects.create(user=self.owner)
+        self.account = self.invitation.technical_user
+        self.token = Token.objects.get(user=self.account)
+        self.service = MonitoredService.objects.get(service_user=self.account)
+        self.log = LogEntry.objects.create(service=self.service)
+
+    def assert_backup_deleted(self):
+        self.assertFalse(BackupInvitation.objects.filter(pk=self.invitation.pk).exists())
+        self.assertFalse(MonitoredService.objects.filter(pk=self.service.pk).exists())
+        self.assertFalse(LogEntry.objects.filter(pk=self.log.pk).exists())
+        self.assertFalse(Token.objects.filter(pk=self.token.pk).exists())
+        self.assertFalse(User.objects.filter(pk=self.account.pk).exists())
+        self.assertTrue(User.objects.filter(pk=self.owner.pk).exists())
+
+    def test_deleting_invitation_in_admin_removes_complete_backup(self):
+        url = reverse('admin:backupapp_backupinvitation_delete', args=[self.invitation.pk])
+        response = self.client.get(url)
+        self.assertContains(response, f'Konto techniczne: {self.account.username}')
+        self.assertContains(response, f'Usługa monitoringu: {self.service.service_name}')
+        self.assertEqual(self.client.post(url, {'post': 'yes'}).status_code, 302)
+        self.assert_backup_deleted()
+
+    def test_deleting_service_in_admin_removes_complete_backup(self):
+        url = reverse('admin:monitoring_monitoredservice_delete', args=[self.service.pk])
+        response = self.client.get(url)
+        self.assertContains(response, f'Konto techniczne: {self.account.username}')
+        self.assertContains(response, f'Zaproszenie do instalacji: {self.invitation.pk}')
+        self.assertEqual(self.client.post(url, {'post': 'yes'}).status_code, 302)
+        self.assert_backup_deleted()
+
+    def test_bulk_deletion_uses_same_cascade(self):
+        list_url = reverse('admin:backupapp_backupinvitation_changelist')
+        payload = {'action': 'delete_selected', '_selected_action': [self.invitation.pk], 'post': 'yes'}
+        self.assertEqual(self.client.post(list_url, payload).status_code, 302)
+        self.assert_backup_deleted()
+
+    def test_deleting_service_model_removes_complete_backup(self):
+        self.service.delete()
+        self.assert_backup_deleted()
+
+    def test_legacy_personal_account_is_preserved(self):
+        human = User.objects.create_user('krysia', password='password')
+        token = Token.objects.create(user=human)
+        invitation = BackupInvitation.objects.create(user=human, token_link=token.key)
+        self.assertIsNone(invitation.technical_user)
+        invitation.delete()
+        self.assertTrue(User.objects.filter(pk=human.pk).exists())
+        self.assertTrue(Token.objects.filter(pk=token.pk).exists())
