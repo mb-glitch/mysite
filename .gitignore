@@ -21,6 +21,8 @@ Thumbs.db
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+db.dev-*.sqlite3
+*.sql.gz
 librus.db
 media/
 staticfiles/

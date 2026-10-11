@@ -22,9 +22,9 @@ cd "$BACKUP_DIR"
 exec >> "$BACKUP_LOG" 2>&1
 
 # 1. Zabezpieczenie przed dublowaniem (jeśli poprzedni rclone copy jeszcze działa)
-pgrep -f "rclone copy" >/dev/null && {
+pgrep -f '[r]clone .*copy' >/dev/null && {
   echo "[$(date +'%F %T')] [10_backup.sh] [POMINIĘTO] Inny proces rclone copy jest już uruchomiony." >> "$BACKUP_LOG"
-  exit 0
+  exit 75
 }
 
 # 2. Wczytanie konfiguracji użytkownika
@@ -67,7 +67,7 @@ echo "[$START_TIME] [10_backup.sh] Rozpoczynam archiwalny backup rclone copy ($K
 # 3. Upewnij się, że katalog docelowy istnieje na Raspberry Pi (przez profil w .ssh.conf)
 DEST_PATH="$DEST_BASE/$KTO/_backup_tel_sync"
 DEST_REMOTE="$PI_NAME:$DEST_PATH"
-ssh -F "$SSH_CONFIG" -o ConnectTimeout=3 -o BatchMode=yes "$PI_NAME" "mkdir -p '$DEST_PATH'" 2>/dev/null || true
+ssh -F "$SSH_CONFIG" -o StrictHostKeyChecking=yes -o ConnectTimeout=3 -o BatchMode=yes "$PI_NAME" "mkdir -p '$DEST_PATH'" 2>/dev/null || true
 
 # 4. Parametry rclone (zawsze z pliku filtrów .rclone-filters.conf)
 RCLONE_PARAMS=(
@@ -80,11 +80,13 @@ RCLONE_PARAMS=(
 )
 
 # 5. Główny backup pamięci wewnętrznej telefonu (rclone copy - bez kasowania na Pi)
-COPY_SUCCESS=true
+COPY_EXIT_CODE=0
 
-if ! rclone copy "$ROOT_PATH" "$DEST_REMOTE" "${RCLONE_PARAMS[@]}"; then
+if rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy "$ROOT_PATH" "$DEST_REMOTE" "${RCLONE_PARAMS[@]}"; then
+  :
+else
+  COPY_EXIT_CODE=$?
   echo "[$(date +'%F %T')] [10_backup.sh] [BŁĄD] rclone copy pamięci wewnętrznej nie powiódł się!" >> "$BACKUP_LOG"
-  COPY_SUCCESS=false
 fi
 
 # 6. Kopia karty SD (jeśli wykryta lub zdefiniowana w konfiguracji)
@@ -99,22 +101,24 @@ if [ -z "${SD_CARD:-}" ]; then
   fi
 fi
 
-if [ "$COPY_SUCCESS" = true ] && [ -n "${SD_CARD:-}" ] && [ -d "/storage/$SD_CARD" ]; then
+if [ "$COPY_EXIT_CODE" -eq 0 ] && [ -n "${SD_CARD:-}" ] && [ -d "/storage/$SD_CARD" ]; then
   echo "[$START_TIME] [10_backup.sh] Kopiuję kartę SD ($SD_CARD)..." >> "$BACKUP_LOG"
-  if ! rclone copy "/storage/$SD_CARD" "$DEST_REMOTE/sd_card" "${RCLONE_PARAMS[@]}"; then
+  if rclone --sftp-known-hosts-file "$HOME/.ssh/known_hosts" copy "/storage/$SD_CARD" "$DEST_REMOTE/sd_card" "${RCLONE_PARAMS[@]}"; then
+    :
+  else
+    COPY_EXIT_CODE=$?
     echo "[$(date +'%F %T')] [10_backup.sh] [BŁĄD] rclone copy karty SD nie powiódł się!" >> "$BACKUP_LOG"
-    COPY_SUCCESS=false
   fi
 fi
 
 END_TIME=$(date +'%F %T')
 
 # 7. Zwrócenie kodu wyjścia do orkiestratora (run_backup.sh)
-if [ "$COPY_SUCCESS" = true ]; then
+if [ "$COPY_EXIT_CODE" -eq 0 ]; then
   echo "[$END_TIME] [10_backup.sh] [SUKCES] 10_backup.sh ($KTO) zakończony pomyślnie." >> "$BACKUP_LOG"
   exit 0
 else
   echo "[$END_TIME] [10_backup.sh] [BŁĄD] 10_backup.sh ($KTO) zakończony niepowodzeniem!" >> "$BACKUP_LOG"
-  exit 1
+  exit "$COPY_EXIT_CODE"
 fi
 

@@ -4,10 +4,9 @@
 # Architektura: Service Accounts (Konta techniczne DRF dla telefonów i maszyn)
 # ==============================================================================
 import secrets
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import User
-from rest_framework.authtoken.models import Token
-from monitoring.models import MonitoredService
+from monitoring.services import provision_service_account
 
 
 def generate_app_token():
@@ -46,32 +45,18 @@ class BackupInvitation(models.Model):
         verbose_name_plural = "Zaproszenia do instalacji"
         ordering = ['user__username']
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         if not self.token_link:
             # 1. Automatyczne konto techniczne dla telefonu: svc_<username>_backup
             machine_username = f"svc_{self.user.username.lower()}_backup"
-            machine_user, _ = User.objects.get_or_create(
+            _, token_obj = provision_service_account(
+                owner=self.user,
                 username=machine_username,
-                defaults={
-                    'is_active': True,
-                    'first_name': 'Konto maszynowe',
-                    'last_name': f'Backup ({self.user.username})'
-                }
+                service_name=f"backup_{self.user.username.lower()}",
+                description=f"Backup telefonu użytkownika {self.user.username}",
             )
-
-            # 2. Oficjalny token DRF dla tego konta maszynowego:
-            token_obj, _ = Token.objects.get_or_create(user=machine_user)
             self.token_link = token_obj.key
-
-            # 3. Rejestracja w MonitoredService (opiekun: self.user, konto: machine_user):
-            MonitoredService.objects.get_or_create(
-                service_user=machine_user,
-                defaults={
-                    'owner': self.user,
-                    'service_name': f"backup_{self.user.username.lower()}",
-                    'description': f"Backup telefonu użytkownika {self.user.username}"
-                }
-            )
 
         super().save(*args, **kwargs)
 

@@ -8,6 +8,8 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.cache import never_cache
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
@@ -24,7 +26,7 @@ except ImportError:
 SCRIPT_DIR = getattr(settings, 'BASE_DIR', Path('.')) / "backupapp" / "scripts"
 SCRIPT_PATH = SCRIPT_DIR / "10_backup.sh"
 RCLONE_CONF_PATH = SCRIPT_DIR / "rclone.conf"
-SCRIPT_VERSION = "2026-09-26 12:00"
+SCRIPT_VERSION = "2026-10-11 monitoring reports"
 
 
 @api_view(['GET'])
@@ -65,10 +67,10 @@ def setup_phone(request, token):
     Wydaje instalator dla telefonu:
     Token należy do konta technicznego (np. svc_maciek_backup).
     """
+    token_obj = get_object_or_404(Token.objects.select_related('user'), key=token, user__is_active=True)
     invitation = BackupInvitation.objects.filter(token_link=token).first()
     
     if not invitation:
-        token_obj = get_object_or_404(Token, key=token)
         invitation = BackupInvitation.objects.filter(token_link=token_obj.key).first()
         if not invitation:
             invitation = BackupInvitation.objects.create(
@@ -98,8 +100,12 @@ def setup_phone(request, token):
     # Monitoring ZAWSZE na stały zewnętrzny/wewnętrzny URL produkcyjny:
     monitor_url = getattr(settings, 'URL_MONITORING', 'https://host109829.xce.pl/api/monitoring/')
 
+    runner_script = (SCRIPT_DIR / 'run_backup.sh').read_text(encoding='utf-8')
+    runner_script = runner_script.replace('https://host109829.xce.pl/api/monitoring/', monitor_url)
+
     bash_script = f"""#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
+umask 077
 echo "=== Instalacja backupu telefonu dla: {username} ==="
 export DEBIAN_FRONTEND=noninteractive
 pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl </dev/null
@@ -114,13 +120,16 @@ Host pi
     User {ssh_user}
     Port 22
     IdentityFile ~/.ssh/id_ed25519
-    StrictHostKeyChecking no
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
 SSHEOF
 chmod 600 ~/.ssh/config
 
 echo "-> Autoryzacja SSH na Raspberry Pi ({ssh_user}@{server_ip}):"
-ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519.pub {ssh_user}@{server_ip} < /dev/tty || true
-ssh -F ~/.ssh/config pi "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty' '/media/pi/elemele/{username}/logs'" < /dev/null 2>/dev/null || true
+echo "Przy pierwszym połączeniu porównaj odcisk klucza hosta z kluczem Raspberry Pi, zanim go zaakceptujesz."
+ssh-copy-id -F ~/.ssh/config -o StrictHostKeyChecking=ask -i ~/.ssh/id_ed25519.pub pi < /dev/tty
+chmod 600 ~/.ssh/known_hosts
+ssh -F ~/.ssh/config -o StrictHostKeyChecking=yes pi "mkdir -p '/media/pi/elemele/{username}/_backup_tel_sync' '/media/pi/elemele/{username}/.skrypty' '/media/pi/elemele/{username}/logs'" < /dev/null
 
 BACKUP_DIR="$HOME/backup"
 mkdir -p "$BACKUP_DIR" ~/.config/rclone
@@ -134,7 +143,9 @@ DEST_BASE="/media/pi/elemele"
 USREOF
 
 # Zapisujemy token konta maszynowego DRF:
+[ ! -f "$BACKUP_DIR/.token.conf" ] || chmod 600 "$BACKUP_DIR/.token.conf"
 echo '{token}' > "$BACKUP_DIR/.token.conf"
+chmod 600 "$BACKUP_DIR/.token.conf"
 
 cat > ~/.config/rclone/rclone.conf << 'EOF'
 [pi]
@@ -143,6 +154,7 @@ host = {server_ip}
 user = {ssh_user}
 port = 22
 key_file = ~/.ssh/id_ed25519
+known_hosts_file = ~/.ssh/known_hosts
 shell_type = unix
 EOF
 chmod 600 ~/.config/rclone/rclone.conf
@@ -161,118 +173,7 @@ cat > "$BACKUP_DIR/.rclone-filters.conf" << 'EOF'
 EOF
 
 cat > "$BACKUP_DIR/run_backup.sh" << 'RUNNER_EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-set -u
-
-BACKUP_DIR="$HOME/backup"
-LOCK_DIR="$BACKUP_DIR/.locks"
-LOG_DIR="$BACKUP_DIR/logs"
-BACKUP_LOG="$LOG_DIR/backup.log"
-mkdir -p "$LOCK_DIR" "$LOG_DIR"
-
-log() {
-  local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $*"
-  echo "$msg"
-  echo "$msg" >> "$BACKUP_LOG"
-}
-
-log "================ START RUN_BACKUP ================"
-
-TODAY=$(date +'%Y-%m-%d')
-KTO="unknown"
-[ -f "$BACKUP_DIR/.user.conf" ] && source "$BACKUP_DIR/.user.conf"
-MONITOR_TOKEN=""
-[ -f "$BACKUP_DIR/.token.conf" ] && MONITOR_TOKEN=$(cat "$BACKUP_DIR/.token.conf" | tr -d '\r\n ')
-
-log "Użytkownik: $KTO"
-
-# 1. Test połączenia SSH z Raspberry Pi
-log "1. Test połączenia SSH z Raspberry Pi (Host: pi)..."
-SSH_OUT=$(ssh -F "$BACKUP_DIR/.ssh.conf" -o ConnectTimeout=5 -o BatchMode=yes pi "echo SSH_CONNECTED" 2>&1)
-SSH_EXIT=$?
-
-if [ $SSH_EXIT -ne 0 ] || [ "$SSH_OUT" != "SSH_CONNECTED" ]; then
-  log "❌ BRAK POŁĄCZENIA Z PI (Kod błędu SSH: $SSH_EXIT)"
-  log "Szczegóły błędu SSH: $SSH_OUT"
-  log "Upewnij się, że jesteś w domowej sieci Wi-Fi i Pi działa."
-  log "================ KONIEC (BRAK PI) ================"
-  exit 0
-fi
-log "✅ Połączenie z Pi działa poprawnie."
-
-termux-wake-lock 2>/dev/null || true
-trap 'termux-wake-unlock 2>/dev/null || true' EXIT
-
-# 2. Synchronizacja skryptów z Pi
-log "2. Sprawdzanie skryptów w pi:/media/pi/elemele/$KTO/.skrypty ..."
-rclone copy "pi:/media/pi/elemele/$KTO/.skrypty" "$BACKUP_DIR" -v >> "$BACKUP_LOG" 2>&1 || true
-chmod +x "$BACKUP_DIR"/*.sh 2>/dev/null || true
-
-ALL_OK=true
-FAILED_SCRIPTS=()
-FOUND_ANY=false
-
-FORCE=false
-if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--force" ] || [ -t 1 ]; then
-  FORCE=true
-  log "Wymuszono uruchomienie (ignoruję blokady dzienne)."
-fi
-
-for script in "$BACKUP_DIR"/*.sh; do
-  [ -f "$script" ] || continue
-  sname=$(basename "$script")
-  [ "$sname" = "run_backup.sh" ] && continue
-  FOUND_ANY=true
-
-  slock="$LOCK_DIR/$sname.done"
-  if [ "$FORCE" = false ] && [ -f "$slock" ] && [ "$(cat "$slock" 2>/dev/null)" = "$TODAY" ]; then
-    log "-> Pomijam $sname (już wykonany dzisiaj $TODAY)"
-    continue
-  fi
-
-  log "-> Uruchamiam: $sname ..."
-  if bash "$script" >> "$BACKUP_LOG" 2>&1; then
-    log "  [OK] $sname zakończony sukcesem."
-    echo "$TODAY" > "$slock"
-  else
-    log "  [BŁĄD] $sname zakończył się błędem!"
-    FAILED_SCRIPTS+=("$sname")
-    ALL_OK=false
-  fi
-done
-
-if [ "$FOUND_ANY" = false ]; then
-  log "⚠️ Nie znaleziono żadnych dodatkowych skryptów *.sh w $BACKUP_DIR."
-fi
-
-# 3. Meldunek do DRF /monitoring/ z Tokenem Konta Maszynowego
-if [ -n "$MONITOR_TOKEN" ]; then
-  log "3. Wysyłanie meldunku do serwera ({monitor_url})..."
-  if [ "$ALL_OK" = true ]; then
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{{http_code}}" --max-time 10 -X POST "{monitor_url}" \
-      -H "Authorization: Token $MONITOR_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{{"status_code": 0, "summary": "Wszystkie skrypty OK"}}' || echo "FAIL")
-    log "Odpowiedź serwera: HTTP $HTTP_CODE"
-    termux-notification --title "Backup OK ($KTO)" --content "Zakończono pomyślnie." --id 999 2>/dev/null || true
-  else
-    FLIST="${{FAILED_SCRIPTS[*]}}"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{{http_code}}" --max-time 10 -X POST "{monitor_url}" \
-      -H "Authorization: Token $MONITOR_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{{\"status_code\": 2, \"error\": \"Błąd skryptów: $FLIST\"}}" || echo "FAIL")
-    log "Odpowiedź serwera: HTTP $HTTP_CODE"
-    termux-notification --title "Błąd backupu ($KTO)" --content "Zawiodły: $FLIST" --id 999 2>/dev/null || true
-  fi
-else
-  log "⚠️ Brak tokena w $BACKUP_DIR/.token.conf - pomijam raport do monitoringu."
-fi
-
-# 4. Kopiowanie logów na Pi (DOPIERO PO ZALOGOWANIU ODPOWIEDZI HTTP!)
-log "4. Przesyłam kompletne logi na Raspberry Pi (/media/pi/elemele/$KTO/logs)..."
-rclone copy "$LOG_DIR" "pi:/media/pi/elemele/$KTO/logs" --fast-list -q 2>/dev/null || true
-
-log "================ KONIEC RUN_BACKUP ================"
+{runner_script}
 RUNNER_EOF
 chmod +x "$BACKUP_DIR/run_backup.sh"
 
@@ -308,6 +209,8 @@ def claim_invitation(request, token):
     return HttpResponse("OK")
 
 
+@never_cache
+@login_required(login_url='backup_login')
 def backup_dashboard(request):
     """
     Pulpit domowników:

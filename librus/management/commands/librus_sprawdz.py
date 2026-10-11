@@ -3,8 +3,7 @@ import logging
 import requests
 import bs4
 import os
-from mymonitoring import Monitoring
-from pathlib import Path
+from monitoring.client import MonitoringReporter
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from librus.models import Dziecko, Wiadomosc, Ogloszenie
@@ -104,7 +103,7 @@ class Librus:
             resp.raise_for_status()
         except requests.RequestException as e:
             logger.error("Pobieranie listy wiadomości nie powiodło się: %s", e)
-            return []
+            raise
 
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
         rows = soup.select("table.decorated.stretch tr[class^='line']")
@@ -127,7 +126,7 @@ class Librus:
             resp.raise_for_status()
         except requests.RequestException as e:
             logger.error("Pobieranie ogłoszeń nie powiodło się: %s", e)
-            return []
+            raise
 
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
         lista = []
@@ -158,7 +157,7 @@ class Librus:
             resp.raise_for_status()
         except requests.RequestException as e:
             logger.error("Pobieranie wiadomości %s nie powiodło się: %s", id_, e)
-            return None
+            raise
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
         content = soup.find("div", {"class": "container-message-content"})
         return content.get_text("\n", strip=True) if content else None
@@ -258,7 +257,8 @@ class Command(BaseCommand):
                 ogloszenie.wyslij_powiadomienie()
 
     def handle(self, *args, **options):
-        monit = Monitoring()
+        monit = MonitoringReporter()
+        results = []
         logger.info("Rozpoczynam import danych...wiadomości")   
                     
         logger.info("--- START PROGRAMU ---")
@@ -277,9 +277,12 @@ class Command(BaseCommand):
         ]
 
         for dziecko in konfiguracja_dzieci:
+            result = {'dziecko': dziecko['name'], 'status_code': 0}
+            results.append(result)
             # Sprawdzamy, czy dane w .env w ogóle istnieją
             if not dziecko["user"] or not dziecko["pass"]:
                 logger.warning(f"Brak danych logowania dla: {dziecko['name']}. Pomijam.")
+                result.update(status_code=2, error='Brak danych logowania do Librusa')
                 continue
 
             librus_client = None
@@ -291,8 +294,7 @@ class Command(BaseCommand):
                     user__username__iexact=dziecko["name"]
                 ).first()
                 if not dziecko_obj:
-                    logger.error(f"Nie znaleziono dziecka w DB: {dziecko['name']}")
-                    continue
+                    raise ValueError(f"Nie znaleziono dziecka w DB: {dziecko['name']}")
                 logger.debug(dziecko_obj)
                 # 2. Pobieranie danych (używamy Twoich funkcji pomocniczych)
                 self.aktualizuj_baze(librus_client, dziecko_obj)
@@ -301,13 +303,18 @@ class Command(BaseCommand):
                 logger.info(f"Synchronizacja {dziecko['name']} zakończona sukcesem.")
             except Exception as e:
                 logger.error(f"Błąd podczas obsługi dziecka {dziecko['name']}: {e}")
-                monit.message['error'] = str(e)
-                monit.status_code = 2
+                result.update(status_code=2, error=str(e), error_type=type(e).__name__)
             finally:
                 if librus_client:
-                    librus_client.close()
-                    logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
-                    monit.message['dziecko'] = dziecko['name']
-                    monit.send()
+                    try:
+                        librus_client.close()
+                        logger.debug(f"Sesja dla {dziecko['name']} zamknięta.")
+                    except Exception as e:
+                        result.update(status_code=2, error=str(e), error_type=type(e).__name__)
+        failed = [result for result in results if result['status_code'] == 2]
+        message = {'results': results, 'summary': 'Import Librusa zakończony' if not failed else 'Błędy importu Librusa'}
+        if failed:
+            message['error'] = '; '.join(f"{item['dziecko']}: {item['error']}" for item in failed)
+        monit.send(status_code=2 if failed else 0, message=message)
         logger.info("--- KONIEC PROGRAMU ---")
         

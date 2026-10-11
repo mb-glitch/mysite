@@ -90,8 +90,8 @@ class MonitoredService(models.Model):
         """Zwraca oficjalny token DRF przypisany do konta technicznego tego urządzenia."""
         if not self.service_user:
             return ""
-        token_obj, _ = Token.objects.get_or_create(user=self.service_user)
-        return token_obj.key
+        token_obj = Token.objects.filter(user=self.service_user).first()
+        return token_obj.key if token_obj else ''
 
     def _get_timeout_seconds(self):
         weekday = timezone.now().weekday()
@@ -102,16 +102,16 @@ class MonitoredService(models.Model):
         return base_timeout
 
     def _get_monitoring_status(self):
-        last_healthy_log = self.logs.filter(status_code=0).order_by('-checked_at').first()
-        if not last_healthy_log:
+        if not self.is_active or (self.service_user and not self.service_user.is_active):
+            return 3
+        latest_log = self.logs.order_by('-checked_at').first()
+        if not latest_log:
             return 2
         now = timezone.now()
-        delay = (now - last_healthy_log.checked_at).total_seconds()
+        delay = (now - latest_log.checked_at).total_seconds()
 
-        if not self.is_active:
-            return 3
-        elif delay <= self._get_timeout_seconds():
-            return 0
+        if delay <= self._get_timeout_seconds():
+            return latest_log.status_code if latest_log.status_code in (1, 2) else 0
         elif delay <= (self._get_timeout_seconds() * 3):
             return 1
         else:
@@ -136,8 +136,6 @@ class MonitoredService(models.Model):
     def sprawdz_status_i_wyslij_powiadomienie(self):
         """Wysyła e-mail przy awarii do opiekuna oraz grupy Monitoring."""
         current_status = self._get_monitoring_status()
-        self.last_check_at = timezone.now()
-        self.save(update_fields=['last_check_at'])
 
         if current_status != self.last_status:
             current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
@@ -156,7 +154,7 @@ class MonitoredService(models.Model):
             pelna_tresc = (
                 f"Data: {now:%Y-%m-%d %H:%M:%S}\n"
                 f"Usługa: {self.service_name}\n"
-                f"Konto techniczne: {self.service_user.username}\n"
+                f"Konto techniczne: {getattr(self.service_user, 'username', 'brak')}\n"
                 f"Opiekun: {self.owner.username}\n"
                 f"Opis: {self.description}\n"
                 f"Zmiana statusu: {self.last_status_display} --> {current_status_display}\n"

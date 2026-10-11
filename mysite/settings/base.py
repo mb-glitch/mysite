@@ -170,7 +170,8 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
 # Stały adres do API monitoringu (raportowanie backupów, termometrów, itp.):
-URL_MONITORING = 'https://host109829.xce.pl/api/monitoring/'
+URL_MONITORING = os.getenv('URL_MONITORING', 'https://host109829.xce.pl/api/monitoring/')
+LIBRUS_MONITORING_TOKEN = os.getenv('LIBRUS_MONITORING_TOKEN') or os.getenv('TOKEN')
 
 # mysite/settings.py
 BACKUP_PI_HOST = '192.168.0.131'  # Stały adres Raspberry Pi

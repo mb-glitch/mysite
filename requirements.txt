@@ -7,5 +7,3 @@ dotenv
 whitenoise
 gunicorn
 mysqlclient
-# Twoja lokalna paczka w trybie edytowalnym
--e /home/maciek/Projects/monitoring
