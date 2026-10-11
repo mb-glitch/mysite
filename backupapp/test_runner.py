@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from django.test import SimpleTestCase
 
@@ -47,8 +48,8 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
     def task(self, name, code):
         (self.backup / name).write_text(f'#!/bin/bash\nexit {code}\n')
 
-    def run_backup(self):
-        return subprocess.run(['bash', str(self.backup / 'run_backup.sh')], env=self.env, capture_output=True, timeout=10)
+    def run_backup(self, *args):
+        return subprocess.run(['bash', str(self.backup / 'run_backup.sh'), *args], env=self.env, capture_output=True, timeout=10)
 
     def reports(self):
         path = self.home / 'requests.jsonl'
@@ -111,3 +112,48 @@ sys.exit(int(os.environ.get('CURL_EXIT', '0')))
         self.stub('rclone', '#!/bin/bash\nif [[ "$*" == *"/storage/emulated/0"* ]]; then exit 23; fi\nexit 0\n')
         self.assertEqual(self.run_backup().returncode, 1)
         self.assertEqual(self.reports()[0]['failed_tasks'][0]['exit_code'], 23)
+
+    def test_second_runner_skips_while_first_is_executing_a_task(self):
+        marker = self.home / 'task_started'
+        release = self.home / 'release_task'
+        self.task('10 wait.sh', 0)
+        (self.backup / '10 wait.sh').write_text(
+            '#!/bin/bash\n'
+            'touch "$HOME/task_started"\n'
+            'until [ -f "$HOME/release_task" ]; do sleep 0.05; done\n'
+        )
+        first = subprocess.Popen(
+            ['bash', str(self.backup / 'run_backup.sh')], env=self.env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(marker.exists(), 'Pierwszy runner nie rozpoczął zadania')
+            self.assertIsNone(first.poll())
+            self.assertEqual(self.run_backup().returncode, 0)
+            self.assertEqual(self.reports(), [])
+            self.assertIn(
+                'Inna instancja run_backup.sh',
+                (self.backup / 'logs/backup.log').read_text(),
+            )
+        finally:
+            release.touch()
+            first.wait(timeout=5)
+        self.assertEqual(first.returncode, 0)
+        self.assertEqual(len(self.reports()), 1)
+        self.assertEqual(self.run_backup('--force').returncode, 0)
+        self.assertEqual(len(self.reports()), 2)
+
+    def test_autoupdate_restarts_runner_without_losing_lock(self):
+        self.task('10 success.sh', 0)
+        self.stub('rclone', '#!/bin/bash\n'
+                  'if [[ "$*" == *".skrypty"* ]] && [ ! -f "$HOME/updated" ]; then\n'
+                  '  touch "$HOME/updated"\n'
+                  '  printf "\\n# aktualizacja\\n" >> "$HOME/backup/run_backup.sh"\n'
+                  'fi\n'
+                  'exit 0\n')
+        self.assertEqual(self.run_backup().returncode, 0)
+        self.assertTrue((self.home / 'updated').exists())
+        self.assertEqual(len(self.reports()), 1)

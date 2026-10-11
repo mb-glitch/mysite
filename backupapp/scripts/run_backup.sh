@@ -15,6 +15,27 @@ if [ -f "$BACKUP_LOG" ] && [ "$(wc -c < "$BACKUP_LOG")" -gt 500000 ]; then
 fi
 exec >> "$BACKUP_LOG" 2>&1
 
+log() { echo "[$(date +'%F %T')] [RUNNER] $*"; }
+
+# Deskryptor 9 przechowuje blokadę przez cały przebieg, także po `exec bash`
+# przy aktualizacji runnera. System zwalnia ją również po nagłym zakończeniu.
+if [ "${BACKUP_RUNNER_REEXEC:-}" = '1' ]; then
+  unset BACKUP_RUNNER_REEXEC
+  if ! flock -n 9; then
+    log 'Nie można przejąć blokady po aktualizacji runnera.'
+    exit 1
+  fi
+else
+  if ! command -v flock >/dev/null 2>&1; then
+    pkg install -y util-linux </dev/null || { log 'Brak flock; nie uruchamiam backupu bez blokady.'; exit 1; }
+  fi
+  exec 9>"$LOCK_DIR/run_backup.lock" || exit 1
+  if ! flock -n 9; then
+    log 'Inna instancja run_backup.sh już działa; pomijam to uruchomienie.'
+    exit 0
+  fi
+fi
+
 TODAY=$(date +'%F')
 LOCK_FILE="$BACKUP_DIR/.last_backup_date"
 SSH_CONFIG="$BACKUP_DIR/.ssh.conf"
@@ -25,8 +46,6 @@ if [ -f "$BACKUP_DIR/.token.conf" ]; then
   MONITOR_TOKEN=$(tr -d '\r\n ' < "$BACKUP_DIR/.token.conf")
 fi
 command -v jq >/dev/null || { echo "[BŁĄD] Brak jq: zainstaluj pkg install jq."; exit 1; }
-
-log() { echo "[$(date +'%F %T')] [RUNNER] $*"; }
 
 send_pending() {
   local report http_code curl_code failed=0
@@ -133,7 +152,7 @@ if [ -f "$SSH_CONFIG" ]; then
 fi
 RUNNER_NEW_HASH=$(md5sum "$BACKUP_DIR/run_backup.sh" | cut -d' ' -f1)
 if [ "$SYNC_CODE" -eq 0 ] && [ "$RUNNER_OLD_HASH" != "$RUNNER_NEW_HASH" ]; then
-  exec bash "$BACKUP_DIR/run_backup.sh" "$@"
+  BACKUP_RUNNER_REEXEC=1 exec bash "$BACKUP_DIR/run_backup.sh" "$@"
 fi
 
 FOUND_ANY=false

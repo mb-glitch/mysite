@@ -23,6 +23,15 @@ class MonitoredServiceForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        intervals = list(MonitoredService.INTERVAL_CHOICES)
+        current = self.instance.timeout_ms
+        if current > 0 and current not in dict(intervals):
+            intervals.append((current, f"Dotychczasowy: {current} ms"))
+        self.fields['timeout_ms'] = forms.TypedChoiceField(
+            choices=intervals, coerce=int, label='Oczekiwany interwał raportów',
+            initial=MonitoredService._meta.get_field('timeout_ms').get_default(),
+            help_text='PREFAIL po przekroczeniu jednego interwału, FAIL po przekroczeniu trzech.',
+        )
         if self.instance.service_user_id:
             self.fields['token_enabled'].initial = self.instance.service_user.is_active
 
@@ -35,6 +44,7 @@ class MonitoredServiceAdmin(admin.ModelAdmin):
         'service_user',
         'drf_token_display',
         'owner',
+        'interval_display',
         'status_display',
         'last_status_display',
         'is_active',

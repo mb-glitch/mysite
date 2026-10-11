@@ -7,6 +7,7 @@ from django.db import models
 from django.contrib.auth.models import User, Group
 from django.utils import timezone
 from django.core.mail import send_mail
+from django.core.validators import MinValueValidator
 from rest_framework.authtoken.models import Token
 import logging
 
@@ -37,7 +38,13 @@ class MonitoredService(models.Model):
         1: "PREFAIL",
         2: "FAIL",
         3: "INACTIVE",
+        4: "ERROR",
     }
+    INTERVAL_CHOICES = (
+        (60_000, "Co minutę"),
+        (3_600_000, "Co godzinę"),
+        (86_400_000, "Raz na dobę"),
+    )
 
     # Człowiek (opiekun / użytkownik nadrzędny, domyślnie maciek)
     owner = models.ForeignKey(
@@ -70,7 +77,10 @@ class MonitoredService(models.Model):
     )
 
     is_active = models.BooleanField(default=True, verbose_name="Czy usługa aktywna")
-    timeout_ms = models.IntegerField(default=5000, help_text="Bazowy timeout w milisekundach")
+    timeout_ms = models.IntegerField(
+        default=60_000, validators=[MinValueValidator(1)],
+        help_text="Oczekiwany odstęp między raportami w milisekundach",
+    )
     last_check_at = models.DateTimeField(null=True, blank=True, verbose_name="Ostatnie sprawdzenie")
     last_change_at = models.DateTimeField(null=True, blank=True, verbose_name="Ostatnia zmiana statusu")
     last_status = models.IntegerField(null=True, blank=True, verbose_name="Ostatni kod statusu")
@@ -94,28 +104,32 @@ class MonitoredService(models.Model):
         return token_obj.key if token_obj else ''
 
     def _get_timeout_seconds(self):
-        weekday = timezone.now().weekday()
-        base_timeout = self.timeout_ms / 1000.0
-        # W weekendy 4x dłuższy czas oczekiwania
-        if weekday in (5, 6):
-            return base_timeout * 4
-        return base_timeout
+        return self.timeout_ms / 1000.0
+
+    @property
+    def interval_display(self):
+        return dict(self.INTERVAL_CHOICES).get(self.timeout_ms, f"{self.timeout_ms} ms")
 
     def _get_monitoring_status(self):
         if not self.is_active or (self.service_user and not self.service_user.is_active):
             return 3
-        latest_log = self.logs.order_by('-checked_at').first()
+        latest_log = self.logs.order_by('-checked_at', '-pk').first()
         if not latest_log:
             return 2
         now = timezone.now()
         delay = (now - latest_log.checked_at).total_seconds()
 
-        if delay <= self._get_timeout_seconds():
-            return latest_log.status_code if latest_log.status_code in (1, 2) else 0
-        elif delay <= (self._get_timeout_seconds() * 3):
-            return 1
-        else:
+        interval = self._get_timeout_seconds()
+        # Brak raportów przez ponad trzy interwały ma pierwszeństwo przed
+        # wynikiem ostatniego wykonania. Nie wydłużamy interwału w weekendy.
+        if interval <= 0 or delay > interval * 3:
             return 2
+        # Zgłoszony błąd nie może zmienić się w łagodniejszy PREFAIL z upływem czasu.
+        if latest_log.status_code == 2:
+            return 4
+        if delay > interval or latest_log.status_code == 1:
+            return 1
+        return 0
 
     @property
     def status(self):

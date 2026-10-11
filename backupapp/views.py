@@ -108,7 +108,7 @@ set -euo pipefail
 umask 077
 echo "=== Instalacja backupu telefonu dla: {username} ==="
 export DEBIAN_FRONTEND=noninteractive
-pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl </dev/null
+pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl util-linux </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
 termux-setup-storage </dev/null 2>/dev/null || true
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
@@ -222,7 +222,8 @@ def backup_dashboard(request):
     if MonitoredService:
         services = MonitoredService.objects.select_related('owner', 'service_user').all().order_by('owner__username', 'service_name')
         for s in services:
-            latest_log = s.logs.order_by('-checked_at').first()
+            latest_log = s.logs.order_by('-checked_at', '-pk').first()
+            service_status = s.status
             log_msg = ""
             if latest_log and isinstance(latest_log.message, dict):
                 log_msg = latest_log.message.get('log') or latest_log.message.get('summary') or latest_log.message.get('error') or str(latest_log.message)
@@ -233,12 +234,12 @@ def backup_dashboard(request):
                 'service': s,
                 'user': s.owner,
                 'service_user': s.service_user,
-                'status_code': latest_log.status_code if latest_log else s.last_status,
-                'status_display': s.status_display,
+                'status_code': service_status,
+                'status_display': s.STATUS_LABELS[service_status],
                 'last_check_at': s.last_check_at,
                 'latest_log': latest_log,
                 'log_content': log_msg,
-                'is_healthy': s.is_healthy,
+                'is_healthy': service_status == 0,
             })
 
     display_data = []

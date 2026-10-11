@@ -263,7 +263,7 @@
       {% else %}
         <div style="display: grid; gap: 12px;">
           {% for item in services %}
-            <div class="card" style="margin-bottom: 0; padding: 16px; border-left: 5px solid {% if item.is_healthy %}#10b981{% elif item.status_code == 1 %}#f59e0b{% else %}#ef4444{% endif %};">
+            <div class="card" style="margin-bottom: 0; padding: 16px; border-left: 5px solid {% if item.is_healthy %}#10b981{% elif item.status_code == 1 %}#f59e0b{% elif item.status_code == 3 %}#94a3b8{% else %}#ef4444{% endif %};">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
                 <div style="display: flex; align-items: center; gap: 10px;">
                   <span class="username" style="font-size: 1.05rem;">
@@ -278,16 +278,21 @@
                     </span>
                   {% elif item.status_code == 1 %}
                     <span style="font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: #451a03; color: #fbbf24; border: 1px solid #d97706;">
-                      ⚠️ OSTRZEŻENIE / DELAY
+                      ⚠️ OPÓŹNIENIE / OSTRZEŻENIE
                     </span>
+                  {% elif item.status_code == 3 %}
+                    <span style="font-size: 0.72rem; color: #94a3b8;">⏸️ USŁUGA WYŁĄCZONA</span>
+                  {% elif item.status_code == 4 %}
+                    <span style="font-size: 0.72rem; color: #f87171;">❌ BŁĄD ZGŁOSZONY PRZEZ USŁUGĘ</span>
                   {% else %}
                     <span style="font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: #450a0a; color: #f87171; border: 1px solid #dc2626;">
-                      ❌ AWARIA / BRAK MELDUNKU ({{ item.status_code|default:"BŁĄD" }})
+                      ❌ BRAK MELDUNKU
                     </span>
                   {% endif %}
                 </div>
                 <span class="date">
-                  Ostatnie sprawdzenie: {% if item.last_check_at %}{{ item.last_check_at|date:"Y-m-d H:i:s" }}{% else %}brak{% endif %}
+                  Raportowanie: {{ item.service.interval_display }}.<br>
+                  Ostatni meldunek: {% if item.last_check_at %}{{ item.last_check_at|date:"Y-m-d H:i:s" }}{% else %}brak{% endif %}
                 </span>
               </div>
 
