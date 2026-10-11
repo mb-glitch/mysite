@@ -144,7 +144,7 @@ if ! ssh-keygen -F '{server_ip}' -f ~/.ssh/known_hosts >/dev/null; then
 fi
 chmod 600 ~/.ssh/known_hosts
 echo "-> Wgrywam klucz logowania na Pi; w razie potrzeby wpisz hasło ponownie."
-ssh-copy-id -F ~/.ssh/config -i ~/.ssh/id_ed25519.pub pi < /dev/tty
+ssh-copy-id -i "$HOME/.ssh/id_ed25519.pub" "{ssh_user}@{server_ip}" < /dev/tty
 if ! ssh -F ~/.ssh/config -o BatchMode=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes pi true < /dev/null; then
   echo "BŁĄD: Logowanie kluczem do Pi nie działa; nie kończę instalacji."
   exit 1
