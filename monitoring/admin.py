@@ -4,6 +4,7 @@
 # Panel Service Accounts i historii logów
 # ==============================================================================
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 from django import forms
 from django.urls import reverse
@@ -11,6 +12,19 @@ from django.utils.html import format_html, format_html_join
 from django.utils import timezone
 from mysite.admin_filters import ArchiveFilter
 from .models import MonitoredService, LogEntry, is_dedicated_service_account
+
+
+class MonitoringUserAdmin(UserAdmin):
+    def get_deleted_objects(self, objs, request):
+        deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
+        # Usunięcie użytkownika usuwa jego usługi i raporty kaskadowo. Zakaz
+        # samodzielnego usuwania pojedynczych raportów nie blokuje tej operacji.
+        permissions.discard(LogEntry._meta.verbose_name)
+        return deleted, counts, permissions, protected
+
+
+admin.site.unregister(User)
+admin.site.register(User, MonitoringUserAdmin)
 
 
 class ArchivedServiceFilter(ArchiveFilter):

@@ -38,7 +38,8 @@ python manage.py monitoring_sprawdz
 ```
 
 Komenda musi korzystać z tego samego środowiska, ustawień i bazy co serwer.
-Mail do opiekuna i grupy Monitoring jest wysyłany przy zmianie stanu; kolejne
+Mail wyłącznie do użytkowników grupy Monitoring jest wysyłany przy zmianie stanu;
+opiekun usługi otrzymuje go tylko wtedy, gdy należy do tej grupy. Kolejne
 sprawdzenie tego samego stanu nie wysyła ponownego alertu. Odbiór raportu też
 sprawdza zmianę stanu, w tym powrót do OK.
 

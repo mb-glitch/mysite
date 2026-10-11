@@ -162,7 +162,7 @@ class MonitoredService(models.Model):
         return self.status == 0
 
     def sprawdz_status_i_wyslij_powiadomienie(self):
-        """Wysyła e-mail przy awarii do opiekuna oraz grupy Monitoring."""
+        """Wysyła e-mail o zmianie stanu wyłącznie członkom grupy Monitoring."""
         if self.is_archived:
             return False
         current_status = self._get_monitoring_status()
@@ -171,15 +171,12 @@ class MonitoredService(models.Model):
             current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
             
             recipients = []
-            if self.owner.email:
-                recipients.append(self.owner.email)
             try:
                 group = Group.objects.get(name="Monitoring")
-                recipients.extend(list(group.user_set.exclude(email='').values_list('email', flat=True)))
+                recipients = sorted(set(group.user_set.exclude(email='').values_list('email', flat=True)))
             except Group.DoesNotExist:
                 logger.warning("Grupa 'Monitoring' nie istnieje w bazie.")
 
-            recipients = list(set(recipients))
             now = timezone.localtime(timezone.now())
             pelna_tresc = (
                 f"Data: {now:%Y-%m-%d %H:%M:%S}\n"

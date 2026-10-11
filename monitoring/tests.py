@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from unittest.mock import patch
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.core.management import call_command
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -87,15 +87,40 @@ class MonitoringTests(TestCase):
     def test_failure_and_recovery_notifications(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
+        self.owner.groups.add(Group.objects.create(name='Monitoring'))
         for code, expected_status in ((0, 0), (2, 4), (0, 0)):
             self.assertEqual(self.client.post(self.url, {'status_code': code}, format='json').status_code, 201)
             self.service.refresh_from_db()
             self.assertEqual(self.service.last_status, expected_status)
         self.assertEqual(send_mail.call_count, 3)
+        self.assertEqual(send_mail.call_args.args[3], ['owner@example.com'])
         last_contact = self.service.last_check_at
         self.service.sprawdz_status_i_wyslij_powiadomienie()
         self.service.refresh_from_db()
         self.assertEqual(self.service.last_check_at, last_contact)
+
+    @patch('monitoring.models.send_mail')
+    def test_owner_outside_monitoring_group_receives_no_alert(self, send_mail):
+        self.owner.email = 'owner@example.com'
+        self.owner.save(update_fields=['email'])
+        group = Group.objects.create(name='Monitoring')
+        member = User.objects.create_user('monitor', email='monitor@example.com')
+        duplicate = User.objects.create_user('monitor2', email='monitor@example.com')
+        group.user_set.add(member, duplicate)
+
+        self.assertEqual(self.client.post(self.url, {'status_code': 2}, format='json').status_code, 201)
+        send_mail.assert_called_once()
+        self.assertEqual(send_mail.call_args.args[3], ['monitor@example.com'])
+        self.assertNotIn(self.owner.email, send_mail.call_args.args[3])
+
+    @patch('monitoring.models.send_mail')
+    def test_no_monitoring_group_means_no_email(self, send_mail):
+        self.owner.email = 'owner@example.com'
+        self.owner.save(update_fields=['email'])
+        self.assertEqual(self.client.post(self.url, {'status_code': 2}, format='json').status_code, 201)
+        send_mail.assert_not_called()
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.last_status, 4)
 
     def test_timeout(self):
         log = LogEntry.objects.create(service=self.service)
@@ -122,6 +147,27 @@ class MonitoringTests(TestCase):
         self.service.service_user.refresh_from_db()
         self.assertFalse(self.service.service_user.is_active)
         self.assertEqual(self.client.post(self.url).status_code, 401)
+
+    def test_admin_can_delete_technical_user_with_service_logs(self):
+        account_id = self.service.service_user_id
+        service_id = self.service.pk
+        log = LogEntry.objects.create(service=self.service)
+        admin = User.objects.create_superuser('admin', 'admin@example.com', 'test-password')
+        browser = Client()
+        browser.force_login(admin)
+        log_delete_url = reverse('admin:monitoring_logentry_delete', args=[log.pk])
+        self.assertEqual(browser.get(log_delete_url).status_code, 403)
+
+        user_delete_url = reverse('admin:auth_user_delete', args=[account_id])
+        confirmation = browser.get(user_delete_url)
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertNotContains(confirmation, 'Nie można usunąć')
+        self.assertEqual(browser.post(user_delete_url, {'post': 'yes'}).status_code, 302)
+        self.assertFalse(User.objects.filter(pk=account_id).exists())
+        self.assertFalse(MonitoredService.objects.filter(pk=service_id).exists())
+        self.assertFalse(LogEntry.objects.filter(pk=log.pk).exists())
+        self.assertFalse(Token.objects.filter(pk=self.token.pk).exists())
+        self.assertTrue(User.objects.filter(pk=self.owner.pk).exists())
 
     def test_admin_service_save_with_large_history(self):
         from django.test import Client
@@ -254,6 +300,7 @@ class MonitoringTests(TestCase):
     def test_periodic_command_alerts_once_per_transition_and_recovers(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
+        self.owner.groups.add(Group.objects.create(name='Monitoring'))
         self.client.post(self.url)
         send_mail.reset_mock()
         received_at = self.service.logs.latest('pk').checked_at
