@@ -106,3 +106,8 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertIn('known_hosts_file = ~/.ssh/known_hosts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/scripts', script)
         self.assertIn('/media/pi/elemele/testuser/.config/backup/logs', script)
+        self.assertIn('pkg install -y termux-api rclone openssh jq curl util-linux', script)
+        self.assertIn('--period-ms 3600000', script)
+        self.assertNotIn('--period 3600000', script)
+        self.assertIn('if ! termux-job-scheduler --job-id 101', script)
+        self.assertIn('BŁĄD: Nie udało się zaplanować backupu', script)

@@ -78,6 +78,7 @@
     {% else %}
       <h1>📱 Instalacja: {{ user.username }}</h1>
       <p>Otwórz aplikację <b>Termux</b> na telefonie, wklej poniższe jedno polecenie i zatwierdź Enterem:</p>
+      <p>Na telefonie potrzebna jest też aplikacja <b>Termux:API</b> z tego samego źródła co Termux.</p>
       
       <code id="cmd">{{ one_liner }}</code>
       
@@ -85,7 +86,7 @@
       
       <div class="hint">
         Wskazówka: Możesz też bezpośrednio w Termuxie wpisać:<br>
-        <code>curl -sL {{ direct_url }} -o ~/setup.sh && bash ~/setup.sh</code>
+        <code>curl -fsSL {{ direct_url }} -o ~/setup.sh && bash ~/setup.sh</code>
       </div>
     {% endif %}
   </div>

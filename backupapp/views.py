@@ -112,7 +112,8 @@ set -euo pipefail
 umask 077
 echo "=== Instalacja backupu telefonu dla: {username} ==="
 export DEBIAN_FRONTEND=noninteractive
-pkg install -y -o Dpkg::Options::="--force-confold" termux-api rclone openssh jq curl util-linux </dev/null 2>/dev/null || pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
+echo "-> Instaluję wymagane pakiety Termuxa..."
+pkg install -y termux-api rclone openssh jq curl util-linux </dev/null
 termux-setup-storage </dev/null 2>/dev/null || true
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 </dev/null
@@ -182,7 +183,10 @@ RUNNER_EOF
 chmod +x "$BACKUP_DIR/run_backup.sh"
 
 termux-job-scheduler --cancel --job-id 101 2>/dev/null || true
-termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period 3600000 --network unmetered --persisted true 2>/dev/null || true
+if ! termux-job-scheduler --job-id 101 --script "$BACKUP_DIR/run_backup.sh" --period-ms 3600000 --network unmetered --persisted true; then
+  echo "BŁĄD: Nie udało się zaplanować backupu. Sprawdź instalację aplikacji Termux:API."
+  exit 1
+fi
 curl -s "{status_url}" >/dev/null 2>&1 || true
 rm -f "$HOME/setup.sh" 2>/dev/null || true
 echo "=== GOTOWE! Backup dla {username} skonfigurowany. ==="
@@ -192,7 +196,7 @@ echo "=== GOTOWE! Backup dla {username} skonfigurowany. ==="
     if 'curl' in user_agent or 'wget' in user_agent or request.GET.get('raw'):
         return HttpResponse(bash_script, content_type='text/plain; charset=utf-8')
 
-    one_liner = f"curl -sL {script_url} -o ~/setup.sh && bash ~/setup.sh"
+    one_liner = f"curl -fsSL {script_url} -o ~/setup.sh && bash ~/setup.sh"
     return render(request, 'setup.html', {'user': user, 'token': token, 'one_liner': one_liner, 'direct_url': script_url})
 
 
