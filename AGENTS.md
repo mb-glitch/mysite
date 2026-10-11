@@ -14,7 +14,8 @@
 - Wprowadzaj możliwie małe, spójne zmiany. Preferuj istniejące rozwiązania; nowe modele i moduły dodawaj, gdy wymaga tego zadanie.
 - Pliki projektu i wyniki pracy zapisuj w katalogu projektu. Nie modyfikuj plików ani konfiguracji poza nim bez zgody.
 - Zachowuj zmiany użytkownika. Nie cofaj cudzej pracy, nie resetuj repozytorium i nie przepisuj historii bez wyraźnego polecenia.
-- Commity i wysyłanie zmian do zdalnego repozytorium wykonuj na polecenie użytkownika.
+- Po ukończeniu zadania i odpowiedniej weryfikacji samodzielnie utwórz lokalny commit obejmujący tylko zmiany wykonane w tym zadaniu. Podaj jego identyfikator w odpowiedzi.
+- Nie dodawaj do commita cudzych lub niezwiązanych zmian. Nie poprawiaj wcześniejszych commitów ani nie wysyłaj zmian do zdalnego repozytorium bez wyraźnego polecenia użytkownika.
 - Na końcu opisz wynik, przeprowadzone sprawdzenia i istotne ograniczenia. Rozróżniaj przygotowanie kodu od wdrożenia i potwierdzenia działania na produkcji.
 
 ## Działania dozwolone bez dodatkowego pytania
