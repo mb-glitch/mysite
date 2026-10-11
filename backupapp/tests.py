@@ -8,9 +8,14 @@ import tempfile
 from xml.etree import ElementTree
 
 from django.contrib.auth.models import AnonymousUser
+from django.contrib.auth.models import User
 from django.conf import settings
-from django.test import SimpleTestCase, RequestFactory
+from django.test import SimpleTestCase, RequestFactory, TestCase
 from django.urls import reverse
+from rest_framework.authtoken.models import Token
+
+from monitoring.models import MonitoredService
+from .models import BackupInvitation
 
 from .views import SSH_KEY_INSTALL_COMMAND, backup_dashboard, setup_phone
 
@@ -65,11 +70,16 @@ class DashboardAccessTests(SimpleTestCase):
         self.assertEqual(svg.tag, '{http://www.w3.org/2000/svg}svg')
 
     @patch('backupapp.views.get_object_or_404')
-    @patch('backupapp.views.BackupInvitation')
-    def test_installation_link_remains_public(self, invitations, token_lookup):
-        invitations.objects.filter.return_value.first.return_value = SimpleNamespace(
-            user=SimpleNamespace(username='testuser'), is_used=False,
+    def test_installation_link_remains_public(self, token_lookup):
+        technical_user = SimpleNamespace(
+            username='testuser', is_staff=False, is_superuser=False,
+            has_usable_password=lambda: False,
         )
+        token_lookup.side_effect = [
+            SimpleNamespace(user=technical_user, key='test-token'),
+            SimpleNamespace(user=SimpleNamespace(username='testuser'), is_used=False),
+            SimpleNamespace(),
+        ]
         request = RequestFactory().get('/backupapp/setup/test-token/?raw=1')
         request.user = AnonymousUser()
         response = setup_phone(request, 'test-token')
@@ -136,3 +146,70 @@ class DashboardAccessTests(SimpleTestCase):
             self.assertEqual(authorized_keys.read_text().splitlines().count(key.strip()), 1)
             self.assertEqual(ssh_dir.stat().st_mode & 0o777, 0o700)
             self.assertEqual(authorized_keys.stat().st_mode & 0o777, 0o600)
+
+
+class BackupInvitationAdminTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser('admin', 'admin@example.com', 'test-password')
+        self.owner = User.objects.create_user('maciek')
+        self.client.force_login(self.admin)
+
+    def test_new_invitation_provisions_technical_account_and_monitoring_service(self):
+        add_url = reverse('admin:backupapp_backupinvitation_add')
+        response = self.client.get(add_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['adminform'].form['user'].value(), self.owner.pk)
+
+        response = self.client.post(add_url, {
+            'user': self.owner.pk,
+            'service_username': 'svc_phone_backup',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation = BackupInvitation.objects.get(user=self.owner)
+        account = User.objects.get(username='svc_phone_backup')
+        service = MonitoredService.objects.get(service_user=account)
+        self.assertEqual(service.owner, self.owner)
+        self.assertEqual(service.timeout_ms, 3_600_000)
+        self.assertFalse(account.has_usable_password())
+        self.assertEqual(invitation.token_link, Token.objects.get(user=account).key)
+        self.assertEqual(self.client.get(reverse('setup_phone', args=[invitation.token_link])).status_code, 200)
+
+    def test_existing_orphan_invitation_can_be_linked_to_chosen_owner(self):
+        account = User.objects.create_user('krysia', password=None)
+        token = Token.objects.create(user=account)
+        invitation = BackupInvitation.objects.create(user=account, token_link=token.key, is_used=True)
+        url = reverse('setup_phone', args=[token.key])
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk]), {
+            'user': self.owner.pk,
+            'service_username': account.username,
+            'is_used': 'on',
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.user, self.owner)
+        self.assertEqual(MonitoredService.objects.get(service_user=account).owner, self.owner)
+        self.assertTrue(invitation.is_used)
+        self.assertEqual(self.client.get(url).status_code, 410)
+
+    def test_setup_link_requires_invitation_and_technical_service(self):
+        account = User.objects.create_user('svc_without_invite', password=None)
+        token = Token.objects.create(user=account)
+        MonitoredService.objects.create(owner=self.owner, service_user=account, service_name='backup_without_invite')
+        self.assertEqual(self.client.get(reverse('setup_phone', args=[token.key])).status_code, 404)
+        self.assertFalse(BackupInvitation.objects.filter(token_link=token.key).exists())
+
+    def test_admin_rejects_human_account_as_technical_user(self):
+        human = User.objects.create_user('human', password='test-password')
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_add'), {
+            'user': self.owner.pk,
+            'service_username': human.username,
+            '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'dedykowane konto techniczne bez hasła')
+        self.assertFalse(BackupInvitation.objects.exists())
+        self.assertFalse(MonitoredService.objects.exists())

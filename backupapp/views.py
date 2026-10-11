@@ -9,7 +9,7 @@ from pathlib import Path
 import qrcode
 from qrcode.image.svg import SvgPathImage
 from django.shortcuts import render, get_object_or_404, redirect
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.urls import reverse
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -80,16 +80,10 @@ def setup_phone(request, token):
     Token należy do konta technicznego (np. svc_maciek_backup).
     """
     token_obj = get_object_or_404(Token.objects.select_related('user'), key=token, user__is_active=True)
-    invitation = BackupInvitation.objects.filter(token_link=token).first()
-    
-    if not invitation:
-        invitation = BackupInvitation.objects.filter(token_link=token_obj.key).first()
-        if not invitation:
-            invitation = BackupInvitation.objects.create(
-                user=token_obj.user,
-                token_link=token_obj.key,
-                is_used=False
-            )
+    invitation = get_object_or_404(BackupInvitation.objects.select_related('user'), token_link=token_obj.key)
+    if token_obj.user.is_staff or token_obj.user.is_superuser or token_obj.user.has_usable_password():
+        raise Http404('Zaproszenie wymaga konta technicznego.')
+    get_object_or_404(MonitoredService, service_user=token_obj.user, owner=invitation.user, is_active=True)
 
     user = invitation.user
     username = user.username.lower()
