@@ -5,6 +5,7 @@
 # ==============================================================================
 import base64
 import hashlib
+import json
 from pathlib import Path
 
 import qrcode
@@ -15,12 +16,14 @@ from django.urls import reverse
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_POST
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
 
 from .models import BackupInvitation
+from monitoring.models import is_dedicated_service_account
 
 try:
     from monitoring.models import MonitoredService, LogEntry
@@ -229,6 +232,28 @@ def claim_invitation(request, token):
 
 @never_cache
 @login_required(login_url='backup_login')
+@require_POST
+def create_mobile_token(request, invitation_id):
+    invitations = BackupInvitation.objects.filter(is_used=False, is_archived=False, user__is_active=True)
+    if not request.user.is_superuser:
+        invitations = invitations.filter(user=request.user)
+    invitation = get_object_or_404(invitations.select_related('user'), pk=invitation_id)
+    if is_dedicated_service_account(invitation.user) or MonitoredService.objects.filter(service_user=invitation.user).exists():
+        raise Http404('Zaproszenie nie należy do konta użytkownika.')
+    Token.objects.get_or_create(user=invitation.user)
+    return redirect('backup_dashboard')
+
+
+def qr_data_uri(payload):
+    qr = qrcode.QRCode(box_size=4, border=4)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    svg = qr.make_image(image_factory=SvgPathImage).to_string()
+    return 'data:image/svg+xml;base64,' + base64.b64encode(svg).decode('ascii')
+
+
+@never_cache
+@login_required(login_url='backup_login')
 def backup_dashboard(request):
     """
     Pulpit domowników:
@@ -263,14 +288,26 @@ def backup_dashboard(request):
     display_data = []
     for invite in active_invites:
         setup_url = request.build_absolute_uri(reverse('setup_phone', args=[invite.token_link]))
-        qr = qrcode.QRCode(box_size=4, border=4)
-        qr.add_data(setup_url)
-        qr.make(fit=True)
-        svg = qr.make_image(image_factory=SvgPathImage).to_string()
+        mobile_allowed = bool(
+            (request.user.is_superuser or request.user.pk == invite.user_id)
+            and invite.user.is_active and not is_dedicated_service_account(invite.user)
+            and not MonitoredService.objects.filter(service_user=invite.user).exists()
+        )
+        mobile_token = Token.objects.filter(user=invite.user).first() if mobile_allowed else None
+        mobile_qr = None
+        if mobile_token:
+            mobile_qr = qr_data_uri(json.dumps({
+                'type': 'mysite-dashboard', 'version': 1,
+                'server_url': request.build_absolute_uri('/').rstrip('/'),
+                'token': mobile_token.key,
+            }, separators=(',', ':')))
         display_data.append({
+            'id': invite.pk,
             'user': invite.user.username,
             'setup_url': setup_url,
-            'qr_data_uri': 'data:image/svg+xml;base64,' + base64.b64encode(svg).decode('ascii'),
+            'qr_data_uri': qr_data_uri(setup_url),
+            'mobile_allowed': mobile_allowed,
+            'mobile_qr_data_uri': mobile_qr,
         })
 
     return render(request, 'backup_dashboard.html', {

@@ -1,6 +1,5 @@
 package pl.mysite.dashboard
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,8 +16,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import androidx.activity.ComponentActivity
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import java.net.URI
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var store: TokenStore
     private var connection: Connection? = null
     private var backup = false
@@ -28,8 +31,32 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var librusButton: Button
     private lateinit var backupButton: Button
-    private val ink = Color.rgb(30, 41, 59)
-    private val muted = Color.rgb(100, 116, 139)
+    private val ink = Color.rgb(66, 54, 78)
+    private val lavender = Color.rgb(229, 218, 250)
+    private val mint = Color.rgb(213, 239, 225)
+    private val peach = Color.rgb(255, 225, 211)
+    private val scanner = registerForActivityResult(ScanContract()) { result ->
+        result.contents?.let { payload ->
+            try {
+                val scanned = LoginQr.parse(payload)
+                AlertDialog.Builder(this).setTitle("Połącz z serwerem")
+                    .setMessage("Zalogować aplikację na serwerze ${URI(scanned.baseUrl).host}?")
+                    .setPositiveButton("Połącz") { _, _ ->
+                        try {
+                            store.save(scanned)
+                            connection = scanned
+                            backup = false
+                            refresh()
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "Nie udało się bezpiecznie zapisać połączenia.", Toast.LENGTH_LONG).show()
+                        }
+                    }.setNegativeButton("Anuluj", null).show()
+            } catch (_: Exception) {
+                Toast.makeText(this, "Nieprawidłowy kod. Zeskanuj kod logowania do aplikacji z panelu zaproszeń.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    private val muted = Color.rgb(112, 93, 129)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,7 +67,7 @@ class MainActivity : Activity() {
         backup = savedInstanceState?.getBoolean("backup") ?: false
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(244, 247, 251))
+            setBackgroundColor(Color.rgb(255, 248, 242))
             setPadding(dp(16), dp(12), dp(16), dp(12))
             setOnApplyWindowInsetsListener { view, insets ->
                 view.setPadding(dp(16) + insets.systemWindowInsetLeft, dp(12) + insets.systemWindowInsetTop,
@@ -55,13 +82,13 @@ class MainActivity : Activity() {
         root.addView(tabs)
         val actions = LinearLayout(this)
         button(actions, "Odśwież") { refresh() }
+        button(actions, "Kod QR") { scanQr() }
         button(actions, "Ustawienia") { settings() }
         root.addView(actions)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         refresh()
-        if (connection == null) settings()
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("backup", backup)
@@ -83,14 +110,23 @@ class MainActivity : Activity() {
     private fun button(parent: LinearLayout, title: String, action: () -> Unit): Button {
         return Button(this).apply {
             text = title; isAllCaps = false
-            parent.addView(this, LinearLayout.LayoutParams(0, -2, 1f))
+            setTextColor(ink)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(when (title) {
+                "Backup", "Odśwież" -> mint
+                "Kod QR", "Zeskanuj kod QR" -> peach
+                else -> lavender
+            })
+            val params = if (parent.orientation == LinearLayout.HORIZONTAL)
+                LinearLayout.LayoutParams(0, -2, 1f)
+            else LinearLayout.LayoutParams(-1, -2)
+            parent.addView(this, params)
             setOnClickListener { action() }
         }
     }
-    private fun card(title: String): LinearLayout {
+    private fun card(title: String, tint: Int = Color.WHITE): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(16).toFloat() }
+            background = GradientDrawable().apply { setColor(tint); cornerRadius = dp(16).toFloat() }
             content.addView(this, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
             text(this, title, 20, true)
         }
@@ -101,7 +137,13 @@ class MainActivity : Activity() {
         librusButton.isEnabled = backup
         backupButton.isEnabled = !backup
         content.removeAllViews()
-        val config = connection ?: run { text(card("Witaj"), "Wpisz adres serwera i token w ustawieniach."); return }
+        val config = connection ?: run {
+            val welcome = card("Witaj w domu", peach)
+            text(welcome, "Zeskanuj kod logowania z panelu zaproszeń, aby zobaczyć Librusa i backup.")
+            button(welcome, "Zeskanuj kod QR") { scanQr() }
+            button(welcome, "Wpisz ręcznie") { settings() }
+            return
+        }
         val requestedBackup = backup
         content.addView(ProgressBar(this))
         text(content, "Pobieranie podsumowania…")
@@ -130,11 +172,11 @@ class MainActivity : Activity() {
     }
     private fun renderBackup(data: JSONObject) {
         val summary = data.getJSONObject("summary")
-        text(card("Podsumowanie backupu"), "Sprawne: ${summary.getInt("healthy")} / ${summary.getInt("total")}")
+        text(card("Podsumowanie backupu", mint), "Sprawne: ${summary.getInt("healthy")} / ${summary.getInt("total")}")
         val services = data.getJSONArray("services")
         if (services.length() == 0) text(card("Brak usług"), "Nie ma usług dostępnych dla tego tokenu.")
         services.objects { item ->
-            val box = card(item.value("description").ifBlank { item.getString("name") })
+            val box = card(item.value("description").ifBlank { item.getString("name") }, lavender)
             val status = item.getString("status")
             text(box, status, 18, true).setTextColor(when (item.getInt("status_code")) {
                 0 -> Color.rgb(21, 128, 61); 3 -> muted; else -> Color.rgb(185, 28, 28)
@@ -145,40 +187,55 @@ class MainActivity : Activity() {
     }
     private fun renderLibrus(data: JSONObject) {
         val report = data.optJSONObject("latest_report")
-        val reportBox = card("Ostatnie pobranie Librusa")
+        val reportBox = card("Ostatnie pobranie Librusa", mint)
         text(reportBox, if (report == null) "Brak raportu synchronizacji." else
             "${date(report.value("checked_at"))}\n${if (report.optInt("status_code", -1) == 0) "Bez zgłoszonych błędów" else "Zgłoszono błąd synchronizacji"}")
         val children = data.getJSONArray("children")
+        val entries = RecentActivity.merge(children)
+        val activityBox = card("Wiadomości i ogłoszenia · ostatnie 10", peach)
+        if (entries.isEmpty()) text(activityBox, "Brak wiadomości i ogłoszeń.")
+        entries.forEach { item ->
+            val entry = item.entry
+            text(activityBox, "${item.childName} · ${entry.getString("kind")}", 14, true)
+            text(activityBox, "${date(entry.value("date"))} · ${entry.value("sender")}", 12).setTextColor(muted)
+            val title = text(activityBox, "▸ ${entry.value("title").ifBlank { "(bez tytułu)" }}", 16, true)
+            val body = text(activityBox, entry.value("content").ifBlank { "Brak treści" }, 14)
+            body.visibility = View.GONE
+            title.isFocusable = true
+            title.contentDescription = "${title.text}. Dotknij, aby rozwinąć lub zwinąć treść"
+            title.setOnClickListener {
+                val expanded = body.visibility == View.GONE
+                body.visibility = if (expanded) View.VISIBLE else View.GONE
+                title.text = "${if (expanded) "▾" else "▸"} ${entry.value("title").ifBlank { "(bez tytułu)" }}"
+            }
+        }
         if (children.length() == 0) text(card("Dzieci"), "Brak danych Librusa.")
         children.objects { child ->
-            val box = card(child.getString("name"))
-            val summary = child.getJSONObject("grade_summary")
-            text(box, "Szacowana średnia: ${summary.value("projected").ifBlank { "—" }}", 18, true)
+            val box = card("${child.getString("name")} · bieżące oceny", lavender)
             text(box, "Pobranie ocen: ${date(child.value("grades_synced_at"))}", 12)
-            text(box, "Średnie ważone", 17, true)
-            val subjects = summary.getJSONArray("subjects")
-            if (subjects.length() == 0) text(box, "Brak ocen liczonych do średniej.")
-            subjects.objects { text(box, "${it.getString("name")}: ${it.getString("mean")} (${it.getInt("count")} ocen)") }
-            text(box, "Ostatnie 10 ocen", 17, true)
             val grades = child.getJSONArray("recent_grades")
             if (grades.length() == 0) text(box, "Brak aktualnych ocen.")
             grades.objects {
                 text(box, "${it.getString("value")} · ${it.getString("subject")}", 16, true)
                 text(box, "${it.getString("date")}  ${it.value("description")}", 14)
             }
-            text(box, "Wiadomości i ogłoszenia · ostatnie 10", 17, true)
-            val activity = child.getJSONArray("activity")
-            if (activity.length() == 0) text(box, "Brak wiadomości i ogłoszeń.")
-            activity.objects {
-                text(box, "${it.getString("kind")} · ${date(it.value("date"))}\n${it.value("sender")}", 12).setTextColor(muted)
-                val title = text(box, "▸ ${it.value("title").ifBlank { "(bez tytułu)" }}", 16, true)
-                val body = text(box, it.value("content").ifBlank { "Brak treści" }, 14)
-                body.visibility = View.GONE
-                title.isFocusable = true
-                title.contentDescription = "${title.text}. Dotknij, aby rozwinąć lub zwinąć treść"
-                title.setOnClickListener { body.visibility = if (body.visibility == View.GONE) View.VISIBLE else View.GONE }
-            }
         }
+        children.objects { child ->
+            val box = card("${child.getString("name")} · średnie", mint)
+            val summary = child.getJSONObject("grade_summary")
+            val subjects = summary.getJSONArray("subjects")
+            if (subjects.length() == 0) text(box, "Brak ocen liczonych do średniej.")
+            subjects.objects {
+                text(box, "${it.getString("name")}: ${it.getString("mean")} (${it.getInt("count")} ocen)")
+            }
+            text(box, "Szacowana średnia: ${summary.value("projected").ifBlank { "—" }}", 18, true)
+        }
+    }
+    private fun scanQr() {
+        scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setCaptureActivity(SecureCaptureActivity::class.java)
+            .setPrompt("Zeskanuj kod logowania do aplikacji z panelu zaproszeń")
+            .setBeepEnabled(false).setBarcodeImageEnabled(false).setOrientationLocked(false))
     }
     private fun settings() {
         val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(8)) }

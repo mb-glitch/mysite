@@ -22,6 +22,7 @@
     a { color: #417690; }
     .setup-link { overflow-wrap: anywhere; }
     .qr { display: block; width: 132px; height: 132px; background: white; }
+    .qr.qr-login { width: 180px; height: 180px; }
     .muted { color: #777; }
     .empty { padding: 16px 12px; color: #666; }
     .status { font-weight: 600; }
@@ -50,13 +51,26 @@
       {% if invitations %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Użytkownik</th><th>Link do instalacji</th><th>Kod QR</th></tr></thead>
+            <thead><tr><th>Użytkownik</th><th>Link do instalacji</th><th>Kod QR instalatora</th><th>Logowanie do aplikacji Android</th></tr></thead>
             <tbody>
               {% for item in invitations %}
                 <tr>
                   <td>{{ item.user }}</td>
                   <td><a class="setup-link" href="{{ item.setup_url }}">{{ item.setup_url }}</a></td>
                   <td><img class="qr" src="{{ item.qr_data_uri }}" alt="Kod QR linku instalacyjnego dla {{ item.user }}"></td>
+                  <td>
+                    {% if item.mobile_qr_data_uri %}
+                      <img class="qr qr-login" src="{{ item.mobile_qr_data_uri }}" alt="Kod QR logowania do aplikacji dla {{ item.user }}">
+                      <span class="muted">Zeskanuj w aplikacji. Kod zawiera token użytkownika — zachowaj go prywatnie.</span>
+                    {% elif item.mobile_allowed %}
+                      <form method="post" action="{% url 'create_mobile_token' item.id %}">
+                        {% csrf_token %}
+                        <button type="submit">Utwórz kod logowania</button>
+                      </form>
+                    {% else %}
+                      <span class="muted">Kod dostępny dla opiekuna i administratora.</span>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>

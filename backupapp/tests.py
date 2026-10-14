@@ -44,7 +44,7 @@ class DashboardAccessTests(SimpleTestCase):
         invitations.objects.filter.return_value.select_related.return_value.order_by.return_value = []
         services.objects.select_related.return_value.all.return_value.order_by.return_value = []
         request = RequestFactory().get(reverse('backup_dashboard'))
-        request.user = SimpleNamespace(is_authenticated=True)
+        request.user = SimpleNamespace(is_authenticated=True, is_superuser=False, pk=999)
         response = backup_dashboard(request)
         self.assertEqual(response.status_code, 200)
         self.assertIn('no-store', response.headers['Cache-Control'])
@@ -53,12 +53,12 @@ class DashboardAccessTests(SimpleTestCase):
     @patch('backupapp.views.BackupInvitation')
     def test_dashboard_shows_direct_setup_link_and_local_qr(self, invitations, services):
         invitation = SimpleNamespace(
-            user=SimpleNamespace(username='ala'), token_link='test-token',
+            pk=1, user_id=1, user=SimpleNamespace(username='ala'), token_link='test-token',
         )
         invitations.objects.filter.return_value.select_related.return_value.order_by.return_value = [invitation]
         services.objects.select_related.return_value.all.return_value.order_by.return_value = []
         request = RequestFactory().get(reverse('backup_dashboard'))
-        request.user = SimpleNamespace(is_authenticated=True)
+        request.user = SimpleNamespace(is_authenticated=True, is_superuser=False, pk=999)
         html = backup_dashboard(request).content.decode()
         setup_url = request.build_absolute_uri(reverse('setup_phone', args=['test-token']))
         self.assertIn(f'href="{setup_url}"', html)
