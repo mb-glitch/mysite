@@ -41,7 +41,8 @@ Aplikacja nie odczytuje automatycznie prywatnych plików Termuxa ani danych inny
 aplikacji. Token jest pobierany przy logowaniu lub odczytywany z QR, bez pokazywania jego wartości. Nie jest zaszyty w APK ani repozytorium.
 Adres i token są razem szyfrowane AES-GCM, klucz jest w Android Keystore.
 Hasło służy wyłącznie do logowania i nie jest zapisywane.
-Kopie danych aplikacji i zrzuty jej ekranu są wyłączone. Wylogowanie usuwa zapisane
+Kopie danych aplikacji są wyłączone. Dashboard pozwala na zrzuty ekranu i
+podgląd ostatniego widoku w przełączniku aplikacji; okno logowania ma ochronę ekranu. Wylogowanie usuwa zapisane
 połączenie lokalnie; nie unieważnia tokenu na serwerze ani sesji innych urządzeń.
 Dane raportów są przechowywane tylko w pamięci; bez internetu ekran
 pokazuje błąd i przycisk ponowienia. Żądania mają timeouty i nie są automatycznie
@@ -75,7 +76,8 @@ Kod zawiera dane dostępowe; nie publikuj go ani nie przekazuj osobom bez uprawn
 Widok Librusa pokazuje: stan synchronizacji, wspólną listę 10 najnowszych
 wiadomości/ogłoszeń dla wszystkich dzieci (z imieniem dziecka, datą i rozwijaną
 treścią), bieżące oceny każdego dziecka, a na końcu jego średnie. Kliknięcie
-w dowolne miejsce kafelka rozwija lub zwija treść. Sąsiadujące wpisy o dokładnie
+w dowolne miejsce kafelka rozwija lub zwija treść. Rozwinięty kafelek ma
+delikatnie ciemniejsze, brzoskwiniowe tło; po zwinięciu wraca zwykłe tło. Sąsiadujące wpisy o dokładnie
 identycznej, niepustej treści są łączone w jeden kafelek, z zachowaniem imion dzieci,
 tytułów i metadanych. Równe treści rozdzielone innym wpisem pozostają osobno.
 Limit 10 dotyczy wpisów przed łączeniem; kafelków może być mniej. Kafelki oddziela

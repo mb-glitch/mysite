@@ -68,7 +68,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         store = TokenStore(this)
         connection = try { store.load() } catch (_: Exception) { store.clear(); null }
         selectedDashboard = if (savedInstanceState?.getBoolean("monitoring") == true) Dashboard.MONITORING else Dashboard.LIBRUS
@@ -350,6 +349,7 @@ class MainActivity : ComponentActivity() {
                 val expanded = body.visibility == View.GONE
                 body.visibility = if (expanded) View.VISIBLE else View.GONE
                 title.text = "${if (expanded) "▾" else "▸"} $subjects"
+                tile.setBackgroundColor(if (expanded) Color.rgb(246, 222, 209) else Color.TRANSPARENT)
                 tile.contentDescription = "$names. $kinds. $metadata. $subjects. " +
                     if (expanded) "${body.text}. Dotknij, aby zwinąć treść" else "Dotknij, aby rozwinąć treść"
             }
