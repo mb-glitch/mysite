@@ -51,7 +51,7 @@ class MonitoredServiceForm(forms.ModelForm):
         self.fields['timeout_ms'] = forms.TypedChoiceField(
             choices=intervals, coerce=int, label='Oczekiwany interwał raportów',
             initial=MonitoredService._meta.get_field('timeout_ms').get_default(),
-            help_text='PREFAIL po przekroczeniu jednego interwału, FAIL po przekroczeniu trzech.',
+            help_text='PREFAIL po przekroczeniu trzech interwałów, FAIL po przekroczeniu sześciu.',
         )
         if self.instance.service_user_id:
             self.fields['token_enabled'].initial = self.instance.service_user.is_active
