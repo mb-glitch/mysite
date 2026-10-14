@@ -13,6 +13,8 @@ from backupapp.models import BackupInvitation
 from .admin import MonitoredServiceAdmin, MonitoredServiceForm
 from .models import LogEntry, MonitoredService
 from .services import provision_service_account
+from notifications.models import PushDelivery
+from notifications.services import deliver_pending
 
 
 class MonitoringTests(TestCase):
@@ -83,7 +85,7 @@ class MonitoringTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
         self.assertEqual(self.client.post(self.url).status_code, 403)
 
-    @patch('monitoring.models.send_mail')
+    @patch('notifications.services.send_mail', return_value=1)
     def test_failure_and_recovery_notifications(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
@@ -92,6 +94,9 @@ class MonitoringTests(TestCase):
             self.assertEqual(self.client.post(self.url, {'status_code': code}, format='json').status_code, 201)
             self.service.refresh_from_db()
             self.assertEqual(self.service.last_status, expected_status)
+        send_mail.assert_not_called()
+        self.assertEqual(PushDelivery.objects.count(), 3)
+        self.assertEqual(deliver_pending(), 3)
         self.assertEqual(send_mail.call_count, 3)
         self.assertEqual(send_mail.call_args.args[3], ['owner@example.com'])
         last_contact = self.service.last_check_at
@@ -99,7 +104,7 @@ class MonitoringTests(TestCase):
         self.service.refresh_from_db()
         self.assertEqual(self.service.last_check_at, last_contact)
 
-    @patch('monitoring.models.send_mail')
+    @patch('notifications.services.send_mail', return_value=1)
     def test_owner_outside_monitoring_group_receives_no_alert(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
@@ -109,11 +114,13 @@ class MonitoringTests(TestCase):
         group.user_set.add(member, duplicate)
 
         self.assertEqual(self.client.post(self.url, {'status_code': 2}, format='json').status_code, 201)
-        send_mail.assert_called_once()
+        send_mail.assert_not_called()
+        self.assertEqual(deliver_pending(), 2)
+        self.assertEqual(send_mail.call_count, 2)
         self.assertEqual(send_mail.call_args.args[3], ['monitor@example.com'])
         self.assertNotIn(self.owner.email, send_mail.call_args.args[3])
 
-    @patch('monitoring.models.send_mail')
+    @patch('notifications.services.send_mail', return_value=1)
     def test_no_monitoring_group_means_no_email(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
@@ -203,7 +210,7 @@ class MonitoringTests(TestCase):
         self.assertEqual(response.context['cl'].result_count, 1100)
         self.assertEqual(len(response.context['cl'].result_list), 50)
 
-    @patch('monitoring.models.send_mail')
+    @patch('notifications.services.send_mail', return_value=1)
     def test_archive_hides_service_and_logs_without_revoking_token(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
@@ -297,12 +304,13 @@ class MonitoringTests(TestCase):
                 self.service.refresh_from_db()
                 self.assertEqual(self.service.status, expected)
 
-    @patch('monitoring.models.send_mail')
+    @patch('notifications.services.send_mail', return_value=1)
     def test_periodic_command_alerts_once_per_transition_and_recovers(self, send_mail):
         self.owner.email = 'owner@example.com'
         self.owner.save(update_fields=['email'])
         self.owner.groups.add(Group.objects.create(name='Monitoring'))
         self.client.post(self.url)
+        deliver_pending()
         send_mail.reset_mock()
         received_at = self.service.logs.latest('pk').checked_at
         for seconds, expected in ((61, 1), (120, 1), (181, 2), (240, 2)):
@@ -311,12 +319,15 @@ class MonitoringTests(TestCase):
             self.service.refresh_from_db()
             self.assertEqual(self.service.last_status, expected)
             self.assertEqual(self.service.last_check_at, received_at)
+        send_mail.assert_not_called()
+        self.assertEqual(deliver_pending(), 2)
         self.assertEqual(send_mail.call_count, 2)
         self.assertIn('PREFAIL', send_mail.call_args_list[0].args[0])
         self.assertIn('FAIL', send_mail.call_args_list[1].args[0])
         self.client.post(self.url)
         self.service.refresh_from_db()
         self.assertEqual(self.service.last_status, 0)
+        self.assertEqual(deliver_pending(), 1)
         self.assertEqual(send_mail.call_count, 3)
 
     def test_admin_interval_selection_preserves_existing_custom_value(self):

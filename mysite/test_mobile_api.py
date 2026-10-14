@@ -95,7 +95,7 @@ class MobileDashboardTests(TestCase):
 
     def test_reads_do_not_write_or_send_notifications(self):
         self.grant_librus()
-        with patch('monitoring.models.send_mail') as mail, patch('librus.models.send_mail') as librus_mail:
+        with patch('notifications.services.send_mail') as mail, patch('notifications.services.send_fcm') as librus_mail:
             for url in (self.backup_url, self.librus_url):
                 self.assertEqual(self.client.get(url).status_code, 200)
                 self.assertEqual(self.client.post(url, {}, format='json').status_code, 405)
@@ -135,7 +135,7 @@ class MobileAuthenticationTests(TestCase):
         self.user.groups.add(self.librus)
         self.assertEqual(self.login('bad-password').status_code, 401)
         self.assertFalse(Token.objects.filter(user=self.user).exists())
-        with patch('monitoring.models.send_mail') as mail:
+        with patch('notifications.services.send_mail') as mail:
             response = self.login()
             mail.assert_not_called()
         token = Token.objects.get(user=self.user)

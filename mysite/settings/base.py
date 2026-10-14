@@ -182,7 +182,6 @@ BACKUP_PI_USER = 'smerf'
 
 # Firebase is opt-in; private credentials stay outside version control.
 FCM_ENABLED = os.getenv('FCM_ENABLED', '0') == '1'
-FCM_SEND_IMMEDIATELY = os.getenv('FCM_SEND_IMMEDIATELY', '1') == '1'
 # Ścieżki względne odnoszą się do projektu, niezależnie od katalogu procesu.
 _firebase_credentials = Path(os.getenv(
     'FIREBASE_CREDENTIALS_FILE', '.secrets/firebase-service-account.json',

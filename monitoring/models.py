@@ -3,10 +3,9 @@
 # Aplikacja: MONITORING
 # Architektura: Service Accounts (Konta techniczne DRF + Nadzorca człowiek)
 # ==============================================================================
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import User
 from django.utils import timezone
-from django.core.mail import send_mail
 from django.core.validators import MinValueValidator
 from rest_framework.authtoken.models import Token
 import logging
@@ -162,42 +161,36 @@ class MonitoredService(models.Model):
         return self.status == 0
 
     def sprawdz_status_i_wyslij_powiadomienie(self):
-        """Powiadamia członków grupy Monitoring: aplikacja albo e-mail."""
-        if self.is_archived:
-            return False
-        current_status = self._get_monitoring_status()
-
-        if current_status != self.last_status:
+        """Atomowo zapisuje zmianę statusu i powiadomienia do kolejki."""
+        from notifications.services import queue_group_notifications
+        with transaction.atomic():
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            if current.is_archived:
+                return False
+            current_status = current._get_monitoring_status()
+            if current_status == current.last_status:
+                return False
             current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
-            
-            from notifications.services import group_notification_recipients
-            recipients, _ = group_notification_recipients('Monitoring')
-
             now = timezone.localtime(timezone.now())
             pelna_tresc = (
                 f"Data: {now:%Y-%m-%d %H:%M:%S}\n"
-                f"Usługa: {self.service_name}\n"
-                f"Konto techniczne: {getattr(self.service_user, 'username', 'brak')}\n"
-                f"Opiekun: {self.owner.username}\n"
-                f"Opis: {self.description}\n"
-                f"Zmiana statusu: {self.last_status_display} --> {current_status_display}\n"
+                f"Usługa: {current.service_name}\n"
+                f"Konto techniczne: {getattr(current.service_user, 'username', 'brak')}\n"
+                f"Opiekun: {current.owner.username}\n"
+                f"Opis: {current.description}\n"
+                f"Zmiana statusu: {current.last_status_display} --> {current_status_display}\n"
             )
-            subject = f"MONITORING ({self.owner.username} / {self.service_name} - {current_status_display})"
-            
-            try:
-                if recipients:
-                    send_mail(subject, pelna_tresc, None, recipients, fail_silently=False)
-                self.last_status = current_status
-                self.last_change_at = timezone.now()
-                self.save(update_fields=["last_status", "last_change_at"])
-                from notifications.services import queue_group_push
-                queue_group_push(group='Monitoring', event_key=f'monitoring:{self.pk}:{self.last_change_at.isoformat()}',
-                                 title=f'Monitoring — {current_status_display}',
-                                 body='Zmienił się stan usługi. Szczegóły znajdziesz w aplikacji.')
-                return True
-            except Exception as e:
-                logger.error(f"Błąd wysyłki e-mail: {e}")
-                return False
+            subject = f"MONITORING ({current.owner.username} / {current.service_name} - {current_status_display})"
+            queue_group_notifications(
+                group='Monitoring', event_key=f'monitoring:{self.pk}:{now.isoformat()}',
+                email_subject=subject, email_body=pelna_tresc,
+                title=f'Monitoring — {current_status_display}',
+                body='Zmienił się stan usługi. Szczegóły znajdziesz w aplikacji.',
+            )
+            self.last_status = current_status
+            self.last_change_at = now
+            self.save(update_fields=['last_status', 'last_change_at'])
+        return True
 
 
 class LogEntry(models.Model):

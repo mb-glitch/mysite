@@ -1,5 +1,4 @@
-from django.db import models
-from django.core.mail import send_mail
+from django.db import models, transaction
 from django.utils import timezone
 from django.contrib.auth.models import User
 import logging
@@ -14,13 +13,13 @@ class Dziecko(models.Model):
 
     class Meta:
         verbose_name_plural = "Dzieci"
-        
+
     def __str__(self):
         return self.user.get_full_name()
-    
+
     def nazwa_usera(self):
         return self.user.username
-            
+
 
 class Ocena(models.Model):
     POWIADOMIENIE_OCZEKUJE = 'oczekuje'
@@ -28,7 +27,7 @@ class Ocena(models.Model):
     POWIADOMIENIE_POMINIETE = 'pominiete'
     POWIADOMIENIE_STATUSY = [
         (POWIADOMIENIE_OCZEKUJE, 'Oczekuje na wysyłkę'),
-        (POWIADOMIENIE_WYSLANE, 'Wysłano e-mail'),
+        (POWIADOMIENIE_WYSLANE, 'Przetworzono powiadomienie'),
         (POWIADOMIENIE_POMINIETE, 'Istniała przed włączeniem powiadomień'),
     ]
 
@@ -63,10 +62,6 @@ class Ocena(models.Model):
     def wyslij_powiadomienie(self):
         if self.powiadomienie_status != self.POWIADOMIENIE_OCZEKUJE or self.archiwizowano_at:
             return False
-        from notifications.services import group_notification_recipients
-        recipients, has_push = group_notification_recipients('Librus')
-        if not recipients and not has_push:
-            raise RuntimeError('Brak adresatów powiadomień w grupie Librus.')
         subject = f'[{self.dziecko.user.username}] Nowa ocena: {self.przedmiot} — {self.wartosc}'
         body = (
             f'Dziecko: {self.dziecko.user.get_full_name() or self.dziecko.user.username}\n'
@@ -75,15 +70,22 @@ class Ocena(models.Model):
             f'Data: {self.data:%Y-%m-%d}\n'
             f'Opis: {self.opis or "—"}\n'
         )
-        if recipients and send_mail(subject, body, None, recipients, fail_silently=False) != 1:
-            raise RuntimeError('Serwer poczty nie potwierdził wysłania powiadomienia.')
-        self.powiadomienie_status = self.POWIADOMIENIE_WYSLANE
-        self.powiadomiono_at = timezone.now()
-        self.save(update_fields=['powiadomienie_status', 'powiadomiono_at'])
-        from notifications.services import queue_group_push
-        queue_group_push(group='Librus', event_key=f'librus-grade:{self.pk}',
-                         title='Librus — nowa ocena', body='Nowa ocena jest dostępna w aplikacji.')
+        from notifications.services import queue_group_notifications
+        with transaction.atomic():
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            if current.powiadomienie_status != self.POWIADOMIENIE_OCZEKUJE or current.archiwizowano_at:
+                return False
+            count = queue_group_notifications(
+                group='Librus', event_key=f'librus-grade:{self.pk}', email_subject=subject, email_body=body,
+                title='Librus — nowa ocena', body='Nowa ocena jest dostępna w aplikacji.',
+            )
+            if not count:
+                raise RuntimeError('Brak adresatów powiadomień w grupie Librus.')
+            self.powiadomienie_status = self.POWIADOMIENIE_WYSLANE
+            self.powiadomiono_at = timezone.now()
+            self.save(update_fields=['powiadomienie_status', 'powiadomiono_at'])
         return True
+
 
 
 class HistoriaOceny(models.Model):
@@ -126,8 +128,6 @@ class Wiadomosc(models.Model):
         verbose_name_plural = "Wiadomości"
 
     def wyslij_powiadomienie(self):
-        from notifications.services import group_notification_recipients
-        recipient_list, has_push = group_notification_recipients('Librus')
         pelna_tresc = (
             f"LIBRUS WIADOMOŚĆ ({self.dziecko})\n"
             f"Od: {self.nadawca}\n"
@@ -137,29 +137,23 @@ class Wiadomosc(models.Model):
         )
         subject = f"[{self.dziecko.user.username}] Nowa wiadomość: {self.temat} od: {self.nadawca}"
 
-        try:
-            # Bez odbiorców e-mail wystarcza aktywna rejestracja push.
-            success = send_mail(
-                subject,
-                pelna_tresc,
-                None, # Użyje DEFAULT_FROM_EMAIL z ustawień
-                recipient_list,
-                fail_silently=False,
-            ) if recipient_list else int(has_push)
-            
-            if success:
-                self.wyslane = True
-                self.sent_at = timezone.now()
-                self.save()
-                from notifications.services import queue_group_push
-                queue_group_push(group='Librus', event_key=f'librus-message:{self.pk}',
-                                 title='Librus — nowa wiadomość', body='Nowa wiadomość jest dostępna w aplikacji.')
-                logger.info(f"Wysłano: {self.temat} ({self.dziecko})")
-                return True
-        except Exception as e:
-            logger.error(f"Błąd wysyłki e-maila: {e}")
-            return False
-       
+        from notifications.services import queue_group_notifications
+        with transaction.atomic():
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            if current.wyslane:
+                return False
+            count = queue_group_notifications(
+                group='Librus', event_key=f'librus-message:{self.pk}',
+                email_subject=subject, email_body=pelna_tresc,
+                title='Librus — nowa wiadomość', body='Nowa wiadomość jest dostępna w aplikacji.',
+            )
+            if not count:
+                return False
+            self.wyslane = True
+            self.sent_at = timezone.now()
+            self.save(update_fields=['wyslane', 'sent_at'])
+        return True
+
 
 class Ogloszenie(models.Model):
     ogloszenie_id = models.CharField(max_length=100)
@@ -171,14 +165,12 @@ class Ogloszenie(models.Model):
     wyslane = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         # unique_together = (('ogloszenie_id', 'dziecko'),)
         verbose_name_plural = "Ogłoszenia"
-        
+
     def wyslij_powiadomienie(self):
-        from notifications.services import group_notification_recipients
-        recipient_list, has_push = group_notification_recipients('Librus')
         pelna_tresc = (
             f"LIBRUS OGŁOSZENIE ({self.dziecko})\n"
             f"Autor ogłoszenia: {self.nadawca}\n"
@@ -188,25 +180,19 @@ class Ogloszenie(models.Model):
         )
         subject = f"[{self.dziecko.user.username}] Nowe ogłoszenie: {self.tytul} od: {self.nadawca}"
 
-        try:
-            # Bez odbiorców e-mail wystarcza aktywna rejestracja push.
-            success = send_mail(
-                subject,
-                pelna_tresc,
-                None, # Użyje DEFAULT_FROM_EMAIL z ustawień
-                recipient_list,
-                fail_silently=False,
-            ) if recipient_list else int(has_push)
-            
-            if success:
-                self.wyslane = True
-                self.sent_at = timezone.now()
-                self.save()
-                from notifications.services import queue_group_push
-                queue_group_push(group='Librus', event_key=f'librus-announcement:{self.pk}',
-                                 title='Librus — nowe ogłoszenie', body='Nowe ogłoszenie jest dostępne w aplikacji.')
-                logger.info(f"Wysłano: {self.tytul} ({self.dziecko})")
-                return True
-        except Exception as e:
-            logger.error(f"Błąd wysyłki e-maila: {e}")
-            return False
+        from notifications.services import queue_group_notifications
+        with transaction.atomic():
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            if current.wyslane:
+                return False
+            count = queue_group_notifications(
+                group='Librus', event_key=f'librus-announcement:{self.pk}',
+                email_subject=subject, email_body=pelna_tresc,
+                title='Librus — nowe ogłoszenie', body='Nowe ogłoszenie jest dostępne w aplikacji.',
+            )
+            if not count:
+                return False
+            self.wyslane = True
+            self.sent_at = timezone.now()
+            self.save(update_fields=['wyslane', 'sent_at'])
+        return True

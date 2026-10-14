@@ -90,14 +90,18 @@ do przodu. Panel pokazuje ostatnią ręczną datę archiwizacji dla każdego dzi
 Format ocen, przedmiotów, kategorii i komentarzy został dodatkowo sprawdzony
 na rzeczywistych odpowiedziach kont używanych w tym projekcie.
 
-## E-mail o nowej ocenie
+## Powiadomienia o nowych ocenach, wiadomościach i ogłoszeniach
 
-Nowe oceny trafiają mailem do użytkowników grupy `Librus`, tak samo jak
-powiadomienia o wiadomościach i ogłoszeniach. Wysyłka następuje po zapisaniu
-oceny w bazie. Kolejne pobranie tej samej oceny nie wysyła jej ponownie.
+Nowe zdarzenia są zapisywane do wspólnej kolejki; użytkownicy grupy `Librus`
+otrzymują push przy aktywnej rejestracji aplikacji, a pozostali e-mail.
+Synchronizacja nie wysyła bezpośrednio. Komenda `send_notifications`
+uruchamiana przez cron co 5 minut obsługuje wysyłkę, historię i ponowienia.
+Szczegóły: [kolejka powiadomień](../notifications/README.md).
+
+Kolejne pobranie tej samej oceny nie tworzy kolejnego powiadomienia.
 Oceny istniejące przy wdrożeniu mają status „Istniała przed włączeniem
-powiadomień” — nie oznaczamy ich fałszywie jako wysłanych. Oceny dodane
-później otrzymują status „Oczekuje na wysyłkę”, a po potwierdzeniu przez
-backend pocztowy „Wysłano e-mail”. W razie błędu status pozostaje oczekujący;
-komenda spróbuje ponownie przy następnym pobraniu i zgłosi błąd do monitoringu.
-Oceny dopisane już w ręcznie zarchiwizowanym okresie nie wywołują maili.
+powiadomień”. Nowe otrzymują „Oczekuje na wysyłkę”, a po zapisie do kolejki
+„Przetworzono powiadomienie”. Wynik dostawy jest w historii powiadomień.
+Błąd zapisu kolejki pozostawia ocenę oczekującą i zgłasza błąd do monitoringu;
+błąd późniejszej wysyłki jest ponawiany przez osobną komendę kolejki.
+Oceny dopisane w ręcznie zarchiwizowanym okresie nie wywołują powiadomień.

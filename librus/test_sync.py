@@ -1,3 +1,5 @@
+from notifications.services import deliver_pending
+from notifications.models import PushDelivery
 import json
 import tempfile
 from datetime import date
@@ -303,7 +305,9 @@ class GradeNotificationTests(TestCase):
         current = {**self.grade, 'librus_id': 'new', 'wartosc': '5', 'opis': 'Kartkówka'}
         self.client.sprawdz_oceny.return_value = [self.grade, current]
         result = self.command.aktualizuj_oceny(self.client, self.child)
-        self.assertEqual(result['notifications_sent'], 1)
+        self.assertEqual(result['notifications_queued'], 1)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(deliver_pending(), 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('Matematyka', mail.outbox[0].subject)
         self.assertIn('5', mail.outbox[0].subject)
@@ -319,15 +323,16 @@ class GradeNotificationTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(self.child.oceny.get(librus_id='old').powiadomienie_status, Ocena.POWIADOMIENIE_POMINIETE)
 
-    def test_failed_email_remains_pending_and_retries_next_run(self):
+    def test_failed_enqueue_remains_pending_and_retries_next_run(self):
         sync_grades(self.child, [self.grade])
         self.client.sprawdz_oceny.return_value = [self.grade]
-        with patch('librus.models.send_mail', side_effect=RuntimeError('SMTP unavailable')):
+        with patch('notifications.services.queue_group_notifications', side_effect=RuntimeError('Database unavailable')):
             with self.assertRaisesRegex(RuntimeError, 'ponowię'):
                 self.command.aktualizuj_oceny(self.client, self.child)
         self.assertEqual(self.child.oceny.get().powiadomienie_status, Ocena.POWIADOMIENIE_OCZEKUJE)
         self.client.sprawdz_oceny.return_value = [self.grade]
         self.command.aktualizuj_oceny(self.client, self.child)
+        self.assertEqual(deliver_pending(), 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(self.child.oceny.get().powiadomienie_status, Ocena.POWIADOMIENIE_WYSLANE)
 

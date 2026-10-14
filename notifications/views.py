@@ -33,8 +33,8 @@ class PushDeviceView(DashboardView):
                                                    'is_active': True},
                 )
                 # A phone switching accounts must not inherit the old account's pending deliveries.
-                PushDelivery.objects.filter(device=device, state='pending').exclude(user=request.user).update(state='skipped')
-                PushDelivery.objects.filter(device=device, state='pending').exclude(
+                PushDelivery.objects.filter(device=device, state__in=['pending', 'processing']).exclude(user=request.user).update(state='skipped')
+                PushDelivery.objects.filter(device=device, state__in=['pending', 'processing']).exclude(
                     group__in=[group for group in ('Librus', 'Monitoring') if permissions[group.lower()]],
                 ).update(state='skipped')
         except IntegrityError:
@@ -46,5 +46,5 @@ class PushDeviceView(DashboardView):
         if device:
             device.is_active = False
             device.save(update_fields=['is_active', 'updated_at'])
-            PushDelivery.objects.filter(device=device, state='pending').update(state='skipped')
+            PushDelivery.objects.filter(device=device, state__in=['pending', 'processing']).update(state='skipped')
         return Response(status=204)

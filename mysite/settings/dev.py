@@ -21,3 +21,6 @@ DATABASES = {
 
 # Local checks must never send real Firebase notifications.
 FCM_ENABLED = False
+
+# Lokalne uruchomienie kolejki nie może wysłać prawdziwej poczty.
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

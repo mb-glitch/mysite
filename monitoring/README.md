@@ -38,10 +38,14 @@ python manage.py monitoring_sprawdz
 ```
 
 Komenda musi korzystać z tego samego środowiska, ustawień i bazy co serwer.
-Mail wyłącznie do użytkowników grupy Monitoring jest wysyłany przy zmianie stanu;
-opiekun usługi otrzymuje go tylko wtedy, gdy należy do tej grupy. Kolejne
-sprawdzenie tego samego stanu nie wysyła ponownego alertu. Odbiór raportu też
-sprawdza zmianę stanu, w tym powrót do OK.
+Powiadomienia członków grupy Monitoring są zapisywane do kolejki przy zmianie
+stanu. Opiekun otrzymuje je tylko wtedy, gdy należy do tej grupy. Aktywna
+aplikacja oznacza push, pozostałe konta otrzymują e-mail. Osobna komenda
+`send_notifications` uruchamiana przez cron co 5 minut realizuje wysyłkę;
+nie zastępuje ona `monitoring_sprawdz`, które nadal wykrywa zmiany stanu.
+Kolejne sprawdzenie tego samego stanu nie tworzy ponownego alertu. Odbiór
+raportu też sprawdza zmianę stanu, w tym powrót do OK.
+Szczegóły: [kolejka i historia powiadomień](../notifications/README.md).
 
 Migracja `0016` zapisuje nową wartość domyślną i walidator dodatniego interwału.
 Nie przelicza ani nie nadpisuje interwałów istniejących usług.

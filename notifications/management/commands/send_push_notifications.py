@@ -1,14 +1,9 @@
-from django.core.management.base import BaseCommand, CommandError
-from notifications.services import deliver_pending
+from .send_notifications import Command as QueueCommand
 
 
-class Command(BaseCommand):
-    help = 'Wysyła oczekujące powiadomienia Firebase; przy włączonym FCM powoduje prawdziwą wysyłkę.'
-
-    def add_arguments(self, parser):
-        parser.add_argument('--limit', type=int, default=50)
+class Command(QueueCommand):
+    help = 'Zgodność ze starą komendą: obsługuje tylko push. Dla obu kanałów użyj send_notifications.'
 
     def handle(self, *args, **options):
-        if not 1 <= options['limit'] <= 500:
-            raise CommandError('--limit musi być pomiędzy 1 a 500.')
-        self.stdout.write(f"Przyjęte przez FCM: {deliver_pending(limit=options['limit'])}")
+        options['channel'] = 'push'
+        return super().handle(*args, **options)

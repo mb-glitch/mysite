@@ -23,14 +23,20 @@ class PushDevice(models.Model):
 
 class PushDelivery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    device = models.ForeignKey(PushDevice, on_delete=models.CASCADE, related_name='deliveries')
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='push_deliveries')
+    device = models.ForeignKey(PushDevice, on_delete=models.SET_NULL, null=True, blank=True, related_name='deliveries')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='push_deliveries')
     event_key = models.CharField(max_length=191)
+    dedup_key = models.CharField(max_length=64, unique=True, default=uuid.uuid4, editable=False)
+    channel = models.CharField(max_length=5, default='push', choices=[('push', 'Aplikacja'), ('email', 'E-mail')])
+    recipient_name = models.CharField(max_length=150, blank=True)
+    recipient_email = models.EmailField(blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_id = models.UUIDField(null=True, blank=True, editable=False)
     group = models.CharField(max_length=16, choices=[('Librus', 'Librus'), ('Monitoring', 'Monitoring')])
-    title = models.CharField(max_length=120)
-    body = models.CharField(max_length=255)
-    state = models.CharField(max_length=8, default='pending', choices=[
-        ('pending', 'Oczekuje'), ('sent', 'Przyjęte przez FCM'), ('skipped', 'Pominięte'), ('failed', 'Błąd'),
+    title = models.TextField()
+    body = models.TextField()
+    state = models.CharField(max_length=10, default='pending', choices=[
+        ('pending', 'Oczekuje'), ('processing', 'W trakcie'), ('sent', 'Przyjęte przez usługę'), ('skipped', 'Pominięte'), ('failed', 'Błąd'),
     ])
     attempts = models.PositiveSmallIntegerField(default=0)
     retry_at = models.DateTimeField(default=timezone.now)
@@ -41,5 +47,5 @@ class PushDelivery(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['device', 'event_key'], name='unique_push_event_per_device')]
         indexes = [models.Index(fields=['state', 'retry_at'], name='push_pending_retry_idx')]
-        verbose_name = 'wysyłka push'
-        verbose_name_plural = 'Wysyłki push'
+        verbose_name = 'powiadomienie'
+        verbose_name_plural = 'Powiadomienia'
