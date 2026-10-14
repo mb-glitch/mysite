@@ -30,4 +30,31 @@ class RecentActivityTest {
         assertTrue(RecentActivity.merge(JSONArray()).isEmpty())
         assertTrue(RecentActivity.merge(JSONArray().put(child(1, "Ala", emptyList()))).isEmpty())
     }
+
+    private fun item(id: Int, childName: String, content: Any, kind: String = "Wiadomość") =
+        ChildActivity(childName, id, entry(id, "2026-10-14T10:00:00Z", kind).put("content", content))
+
+    @Test fun combinesAdjacentIdenticalContentAndKeepsAllChildrenAndMetadata() {
+        val first = item(1, "Ala", "Wspólna treść")
+        val second = item(2, "Ola", "Wspólna treść", "Ogłoszenie")
+        val third = item(3, "Ala", "Wspólna treść")
+        val groups = RecentActivity.groupAdjacent(listOf(first, second, third))
+        assertEquals(1, groups.size)
+        assertEquals(listOf(first, second, third), groups.single())
+        assertEquals(listOf("Ala", "Ola", "Ala"), groups.single().map { it.childName })
+    }
+
+    @Test fun leavesIdenticalNonAdjacentMessagesSeparate() {
+        val entries = listOf(item(1, "Ala", "Treść A"), item(2, "Ola", "Treść B"),
+            item(3, "Ala", "Treść A"))
+        assertEquals(entries.map { listOf(it) }, RecentActivity.groupAdjacent(entries))
+    }
+
+    @Test fun doesNotCombineMissingBlankOrOnlySimilarContent() {
+        val entries = listOf(item(1, "Ala", JSONObject.NULL), item(2, "Ola", JSONObject.NULL),
+            item(3, "Ala", ""), item(4, "Ola", ""), item(5, "Ala", " "), item(6, "Ola", " "),
+            item(7, "Ala", "Treść"), item(8, "Ola", "Treść "))
+        assertEquals(entries.map { listOf(it) }, RecentActivity.groupAdjacent(entries))
+        assertTrue(RecentActivity.groupAdjacent(emptyList()).isEmpty())
+    }
 }

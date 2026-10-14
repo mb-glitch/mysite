@@ -67,7 +67,12 @@ Kod zawiera dane dostępowe; nie publikuj go ani nie przekazuj osobom bez uprawn
 
 Widok Librusa pokazuje: stan synchronizacji, wspólną listę 10 najnowszych
 wiadomości/ogłoszeń dla wszystkich dzieci (z imieniem dziecka, datą i rozwijaną
-treścią), bieżące oceny każdego dziecka, a na końcu jego średnie. Wpisy są sortowane
+treścią), bieżące oceny każdego dziecka, a na końcu jego średnie. Kliknięcie
+w dowolne miejsce kafelka rozwija lub zwija treść. Sąsiadujące wpisy o dokładnie
+identycznej, niepustej treści są łączone w jeden kafelek, z zachowaniem imion dzieci,
+tytułów i metadanych. Równe treści rozdzielone innym wpisem pozostają osobno.
+Limit 10 dotyczy wpisów przed łączeniem; kafelków może być mniej. Kafelki oddziela
+fioletowa linia o wysokości jednego fizycznego piksela, bez dodatkowych marginesów. Wpisy są sortowane
 według rzeczywistego czasu, także gdy daty zawierają różne strefy czasowe. API nadal
 zwraca aktywność osobno dla każdego dziecka; aplikacja łączy ją bez zmiany kontraktu.
 
@@ -138,7 +143,7 @@ venv/bin/python manage.py test --settings=mysite.settings.dev
 W środowisku przygotowania zmian pełne 107 testów Django przeszło, w tym testy
 kodów QR (uprawnienia, brak tokenu w czytelnym HTML, CSRF, brak zapisu przy GET,
 ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń). Kotlin skompilowano,
-6 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
+9 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
 (z ostrzeżeniami dotyczącymi m.in. stylu kodu i wersji bibliotek):
 
 ```sh

@@ -194,19 +194,39 @@ class MainActivity : ComponentActivity() {
         val entries = RecentActivity.merge(children)
         val activityBox = card("Wiadomości i ogłoszenia · ostatnie 10", peach)
         if (entries.isEmpty()) text(activityBox, "Brak wiadomości i ogłoszeń.")
-        entries.forEach { item ->
-            val entry = item.entry
-            text(activityBox, "${item.childName} · ${entry.getString("kind")}", 14, true)
-            text(activityBox, "${date(entry.value("date"))} · ${entry.value("sender")}", 12).setTextColor(muted)
-            val title = text(activityBox, "▸ ${entry.value("title").ifBlank { "(bez tytułu)" }}", 16, true)
-            val body = text(activityBox, entry.value("content").ifBlank { "Brak treści" }, 14)
+        RecentActivity.groupAdjacent(entries).forEachIndexed { index, items ->
+            if (index > 0) {
+                activityBox.addView(View(this).apply { setBackgroundColor(Color.rgb(139, 103, 165)) },
+                    LinearLayout.LayoutParams(-1, 1))
+            }
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(2), 0, dp(2))
+                isFocusable = true
+                activityBox.addView(this, LinearLayout.LayoutParams(-1, -2))
+            }
+            val names = items.map { it.childName }.distinct().joinToString(", ")
+            val kinds = items.map { it.entry.getString("kind") }.distinct().joinToString(", ")
+            val subjects = items.map { it.entry.value("title").ifBlank { "(bez tytułu)" } }
+                .distinct().joinToString("\n")
+            text(tile, "$names · $kinds", 14, true)
+            val metadata = items.map {
+                "${it.childName} · ${date(it.entry.value("date"))} · ${it.entry.value("sender")}".trimEnd(' ', '·')
+            }.distinct().joinToString("\n")
+            text(tile, metadata, 12).setTextColor(muted)
+            val title = text(tile, "▸ $subjects", 16, true)
+            val body = text(tile, items.first().entry.value("content").ifBlank { "Brak treści" }, 14)
             body.visibility = View.GONE
-            title.isFocusable = true
-            title.contentDescription = "${title.text}. Dotknij, aby rozwinąć lub zwinąć treść"
-            title.setOnClickListener {
+            for (childIndex in 0 until tile.childCount) {
+                tile.getChildAt(childIndex).setPadding(0, dp(2), 0, dp(2))
+            }
+            tile.contentDescription = "$names. $kinds. $metadata. $subjects. Dotknij, aby rozwinąć treść"
+            tile.setOnClickListener {
                 val expanded = body.visibility == View.GONE
                 body.visibility = if (expanded) View.VISIBLE else View.GONE
-                title.text = "${if (expanded) "▾" else "▸"} ${entry.value("title").ifBlank { "(bez tytułu)" }}"
+                title.text = "${if (expanded) "▾" else "▸"} $subjects"
+                tile.contentDescription = "$names. $kinds. $metadata. $subjects. " +
+                    if (expanded) "${body.text}. Dotknij, aby zwinąć treść" else "Dotknij, aby rozwinąć treść"
             }
         }
         if (children.length() == 0) text(card("Dzieci"), "Brak danych Librusa.")
