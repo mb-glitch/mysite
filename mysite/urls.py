@@ -17,9 +17,14 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from .mobile_api import BackupDashboardView, LibrusDashboardView
+from .mobile_api import (
+    BackupDashboardView, LibrusDashboardView, MobileLoginView, MobileProfileView, MonitoringDashboardView,
+)
 
 urlpatterns = [
+    path('api/v1/auth/login/', MobileLoginView.as_view(), name='api-v1-mobile-login'),
+    path('api/v1/auth/me/', MobileProfileView.as_view(), name='api-v1-mobile-profile'),
+    path('api/v1/monitoring/dashboard/', MonitoringDashboardView.as_view(), name='api-v1-monitoring-dashboard'),
     path('api/v1/librus/dashboard/', LibrusDashboardView.as_view(), name='api-v1-librus-dashboard'),
     path('api/v1/backup/dashboard/', BackupDashboardView.as_view(), name='api-v1-backup-dashboard'),
     path("backupapp/", include("backupapp.urls")),

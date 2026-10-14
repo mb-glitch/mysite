@@ -2,6 +2,7 @@ from datetime import date
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -105,3 +106,127 @@ class MobileDashboardTests(TestCase):
         self.service.refresh_from_db()
         self.assertIsNone(self.service.last_check_at)
         self.assertIsNone(self.service.last_status)
+
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+                   CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+                                       'LOCATION': 'mobile-auth-tests'}})
+class MobileAuthenticationTests(TestCase):
+    login_url = '/api/v1/auth/login/'
+    profile_url = '/api/v1/auth/me/'
+    monitoring_url = '/api/v1/monitoring/dashboard/'
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user('viewer', password='test-password')
+        self.librus = Group.objects.create(name='Librus')
+        self.monitoring = Group.objects.create(name='Monitoring')
+        self.client = APIClient()
+
+    def login(self, password='test-password'):
+        return self.client.post(self.login_url, {'username': self.user.username, 'password': password}, format='json')
+
+    def authenticate(self):
+        token, _ = Token.objects.get_or_create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return token
+
+    def test_login_uses_password_and_reuses_existing_token(self):
+        self.user.groups.add(self.librus)
+        self.assertEqual(self.login('bad-password').status_code, 401)
+        self.assertFalse(Token.objects.filter(user=self.user).exists())
+        with patch('monitoring.models.send_mail') as mail:
+            response = self.login()
+            mail.assert_not_called()
+        token = Token.objects.get(user=self.user)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['token'], token.key)
+        self.assertEqual(response.data['permissions'], {'librus': True, 'monitoring': False})
+        self.assertEqual(self.login().data['token'], token.key)
+        self.assertEqual(response['Cache-Control'], 'no-store')
+        self.assertNotIn('test-password', response.content.decode())
+
+    def test_login_blocks_unprivileged_inactive_and_technical_accounts(self):
+        self.assertEqual(self.login().status_code, 403)
+        self.assertFalse(Token.objects.filter(user=self.user).exists())
+        self.user.groups.add(self.monitoring)
+        self.user.is_active = False
+        self.user.save()
+        self.assertEqual(self.login().status_code, 401)
+        self.user.is_active = True
+        self.user.save()
+        service, token = provision_service_account(owner=self.user, username='svc_login', service_name='backup')
+        machine = service.service_user
+        machine.set_password('test-password')
+        machine.save()
+        machine.groups.add(self.librus, self.monitoring)
+        response = self.client.post(self.login_url, {'username': machine.username, 'password': 'test-password'}, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        self.assertEqual(self.client.get(self.profile_url).data['permissions'], {'librus': False, 'monitoring': False})
+        self.assertEqual(self.client.get(self.monitoring_url).status_code, 403)
+
+    def test_profile_permissions_reflect_group_changes_without_returning_token(self):
+        token = self.authenticate()
+        self.assertEqual(self.client.get(self.profile_url).data['permissions'], {'librus': False, 'monitoring': False})
+        self.user.groups.add(self.librus)
+        self.assertEqual(self.client.get(self.profile_url).data['permissions'], {'librus': True, 'monitoring': False})
+        self.user.groups.add(self.monitoring)
+        response = self.client.get(self.profile_url)
+        self.assertEqual(response.data['permissions'], {'librus': True, 'monitoring': True})
+        self.assertNotIn(token.key, response.content.decode())
+        self.user.groups.remove(self.librus)
+        self.assertEqual(self.client.get(self.profile_url).data['permissions'], {'librus': False, 'monitoring': True})
+        self.assertEqual(self.client.get('/api/v1/librus/dashboard/').status_code, 403)
+
+    def test_monitoring_group_sees_all_active_services_and_latest_report_only(self):
+        token = self.authenticate()
+        self.assertEqual(self.client.get(self.monitoring_url).status_code, 403)
+        self.user.groups.add(self.monitoring)
+        other = User.objects.create_user('another-owner', password='test-password')
+        service, _ = provision_service_account(owner=other, username='svc_report', service_name='phone')
+        empty, _ = provision_service_account(owner=self.user, username='svc_empty', service_name='empty')
+        archived, _ = provision_service_account(owner=self.user, username='svc_archived', service_name='archived')
+        archived.is_archived = True
+        archived.save()
+        LogEntry.objects.create(service=service, message={'summary': 'Old report'})
+        report = LogEntry.objects.create(service=service, status_code=2, message={
+            'error': f'Błąd backupu {token.key}', 'token': 'do-not-publish',
+            'log': 'private raw log', 'failed_tasks': [{'script': 'backup_sd', 'exit_code': 42, 'password': 'secret'}],
+        })
+        response = self.client.get(self.monitoring_url)
+        rows = {item['id']: item for item in response.data['services']}
+        self.assertEqual(set(rows), {service.pk, empty.pk})
+        latest = rows[service.pk]['latest_report']
+        self.assertEqual(latest['checked_at'], report.checked_at)
+        self.assertEqual(latest['status_code'], 2)
+        self.assertIn('Błąd backupu', latest['summary'])
+        self.assertIn('backup_sd: kod 42', latest['summary'])
+        self.assertIsNone(rows[empty.pk]['latest_report'])
+        for hidden in ('Old report', token.key, 'do-not-publish', 'private raw log', 'secret'):
+            self.assertNotIn(hidden, response.content.decode())
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertEqual(self.client.post(self.monitoring_url, {}, format='json').status_code, 405)
+
+    def test_login_validation_and_rate_limit(self):
+        self.assertEqual(self.client.get(self.login_url).status_code, 405)
+        cache.clear()
+        for _ in range(5):
+            self.assertEqual(self.login('wrong').status_code, 401)
+        response = self.login('wrong')
+        self.assertEqual(response.status_code, 429)
+        self.assertFalse(Token.objects.filter(user=self.user).exists())
+
+    def test_anonymous_profile_and_monitoring_are_rejected(self):
+        for url in (self.profile_url, self.monitoring_url):
+            self.assertEqual(self.client.get(url).status_code, 401)
+        self.user.is_superuser = True
+        self.user.save()
+        self.authenticate()
+        self.assertEqual(self.client.get(self.profile_url).data['permissions'], {'librus': True, 'monitoring': True})
+        self.assertEqual(self.client.get(self.monitoring_url).status_code, 200)
+
+    def test_login_rejects_malformed_fields_without_disclosing_password(self):
+        response = self.client.post(self.login_url, {'username': 'viewer'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Token.objects.filter(user=self.user).exists())

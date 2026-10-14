@@ -12,7 +12,7 @@ class LoginQrTest {
             .put("server_url", url).put("token", key).toString()
 
     @Test fun readsServerAndTokenTogether() {
-        assertEquals(Connection("https://example.com", token, ""), LoginQr.parse(payload()))
+        assertEquals(Connection("https://example.com", token), LoginQr.parse(payload()))
     }
     @Test fun rejectsInstallerLinksAndUnsupportedFormats() {
         for (value in listOf("https://example.com/backupapp/setup/$token/", "not json",

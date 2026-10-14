@@ -24,13 +24,16 @@ import java.net.URI
 class MainActivity : ComponentActivity() {
     private lateinit var store: TokenStore
     private var connection: Connection? = null
-    private var backup = false
+    private var selectedDashboard = Dashboard.LIBRUS
+    private var access: DashboardAccess? = null
     private var generation = 0
     private val worker = Executors.newSingleThreadExecutor()
     private var pending: Future<*>? = null
     private lateinit var content: LinearLayout
     private lateinit var librusButton: Button
-    private lateinit var backupButton: Button
+    private lateinit var monitoringButton: Button
+    private lateinit var refreshButton: Button
+    private lateinit var logoutButton: Button
     private val ink = Color.rgb(66, 54, 78)
     private val lavender = Color.rgb(229, 218, 250)
     private val mint = Color.rgb(213, 239, 225)
@@ -42,14 +45,7 @@ class MainActivity : ComponentActivity() {
                 AlertDialog.Builder(this).setTitle("Połącz z serwerem")
                     .setMessage("Zalogować aplikację na serwerze ${URI(scanned.baseUrl).host}?")
                     .setPositiveButton("Połącz") { _, _ ->
-                        try {
-                            store.save(scanned)
-                            connection = scanned
-                            backup = false
-                            refresh()
-                        } catch (_: Exception) {
-                            Toast.makeText(this, "Nie udało się bezpiecznie zapisać połączenia.", Toast.LENGTH_LONG).show()
-                        }
+                        beginLogin { scanned }
                     }.setNegativeButton("Anuluj", null).show()
             } catch (_: Exception) {
                 Toast.makeText(this, "Nieprawidłowy kod. Zeskanuj kod logowania do aplikacji z panelu zaproszeń.", Toast.LENGTH_LONG).show()
@@ -64,7 +60,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         store = TokenStore(this)
         connection = try { store.load() } catch (_: Exception) { store.clear(); null }
-        backup = savedInstanceState?.getBoolean("backup") ?: false
+        selectedDashboard = if (savedInstanceState?.getBoolean("monitoring") == true) Dashboard.MONITORING else Dashboard.LIBRUS
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(255, 248, 242))
@@ -77,13 +73,12 @@ class MainActivity : ComponentActivity() {
         }
         text(root, "Domowy dashboard", 24, true)
         val tabs = LinearLayout(this)
-        librusButton = button(tabs, "Librus") { backup = false; refresh() }
-        backupButton = button(tabs, "Backup") { backup = true; refresh() }
+        librusButton = button(tabs, "Librus") { selectedDashboard = Dashboard.LIBRUS; refresh() }
+        monitoringButton = button(tabs, "Monitoring") { selectedDashboard = Dashboard.MONITORING; refresh() }
         root.addView(tabs)
         val actions = LinearLayout(this)
-        button(actions, "Odśwież") { refresh() }
-        button(actions, "Kod QR") { scanQr() }
-        button(actions, "Ustawienia") { settings() }
+        refreshButton = button(actions, "Odśwież") { refresh() }
+        logoutButton = button(actions, "Wyloguj") { confirmLogout() }
         root.addView(actions)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -91,7 +86,7 @@ class MainActivity : ComponentActivity() {
         refresh()
     }
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean("backup", backup)
+        outState.putBoolean("monitoring", selectedDashboard == Dashboard.MONITORING)
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
@@ -112,7 +107,7 @@ class MainActivity : ComponentActivity() {
             text = title; isAllCaps = false
             setTextColor(ink)
             backgroundTintList = android.content.res.ColorStateList.valueOf(when (title) {
-                "Backup", "Odśwież" -> mint
+                "Monitoring", "Odśwież" -> mint
                 "Kod QR", "Zeskanuj kod QR" -> peach
                 else -> lavender
             })
@@ -131,48 +126,127 @@ class MainActivity : ComponentActivity() {
             text(this, title, 20, true)
         }
     }
+    private fun updateControls() {
+        librusButton.visibility = if (connection != null && access?.librus == true) View.VISIBLE else View.GONE
+        monitoringButton.visibility = if (connection != null && access?.monitoring == true) View.VISIBLE else View.GONE
+        librusButton.isEnabled = selectedDashboard != Dashboard.LIBRUS
+        monitoringButton.isEnabled = selectedDashboard != Dashboard.MONITORING
+        refreshButton.visibility = if (connection != null) View.VISIBLE else View.GONE
+        logoutButton.visibility = if (connection != null) View.VISIBLE else View.GONE
+    }
     private fun refresh() {
         val request = ++generation
         pending?.cancel(true)
-        librusButton.isEnabled = backup
-        backupButton.isEnabled = !backup
+        access = null
+        updateControls()
         content.removeAllViews()
         val config = connection ?: run {
             val welcome = card("Witaj w domu", peach)
-            text(welcome, "Zeskanuj kod logowania z panelu zaproszeń, aby zobaczyć Librusa i backup.")
+            text(welcome, "Zaloguj się kontem Django lub zeskanuj kod logowania z panelu zaproszeń.")
             button(welcome, "Zeskanuj kod QR") { scanQr() }
-            button(welcome, "Wpisz ręcznie") { settings() }
+            button(welcome, "Zaloguj się hasłem") { loginDialog() }
             return
         }
-        val requestedBackup = backup
+        val current = selectedDashboard
         content.addView(ProgressBar(this))
         text(content, "Pobieranie podsumowania…")
         pending = worker.submit {
-            val result = runCatching { DashboardApi.load(config, requestedBackup) }
+            val result = runCatching {
+                val permissions = DashboardAccess.parse(DashboardApi.profile(config))
+                val selected = permissions.choose(current)
+                Triple(permissions, selected, selected?.let { view -> runCatching { DashboardApi.load(config, view) } })
+            }
             runOnUiThread {
                 if (isDestroyed || generation != request) return@runOnUiThread
                 content.removeAllViews()
-                result.fold(onSuccess = { data ->
+                result.fold(onSuccess = { (permissions, selected, dashboardResult) ->
+                    access = permissions
+                    if (selected != null) selectedDashboard = selected
+                    updateControls()
+                    if (selected == null || dashboardResult == null) {
+                        text(card("Brak dostępnych widoków"), "Poproś administratora o dodanie konta do grupy Librus lub Monitoring.")
+                    } else dashboardResult.fold(onSuccess = { data ->
+                        try {
+                            if (selected == Dashboard.MONITORING) renderMonitoring(data) else renderLibrus(data)
+                            text(content, "Odczyt: ${date(data.value("generated_at"))}", 12).setTextColor(muted)
+                        } catch (_: Exception) {
+                            content.removeAllViews()
+                            text(card("Nie udało się wyświetlić danych"), "Serwer zwrócił niezgodną odpowiedź API.")
+                        }
+                    }, onFailure = { handleFailure(it) })
+                }, onFailure = { handleFailure(it) })
+            }
+        }
+    }
+    private fun handleFailure(error: Throwable) {
+        if (error is ApiException && error.statusCode == 401) {
+            try {
+                clearSession()
+                Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
+            } catch (_: Exception) { showError("Nie udało się usunąć zapisanej sesji. Spróbuj wylogować się ponownie.") }
+        } else showError(errorMessage(error))
+    }
+    private fun errorMessage(error: Throwable): String = when (error) {
+        is ApiException -> error.message ?: "Nie udało się wykonać żądania."
+        is IllegalArgumentException -> "Sprawdź dane i adres serwera HTTPS."
+        else -> "Nie udało się połączyć. Sprawdź internet, adres serwera i certyfikat HTTPS."
+    }
+    private fun showError(message: String) {
+        text(card("Nie udało się pobrać danych"), message)
+        button(content, "Spróbuj ponownie") { refresh() }
+    }
+    private fun beginLogin(fetchConnection: () -> Connection) {
+        val request = ++generation
+        pending?.cancel(true)
+        content.removeAllViews()
+        content.addView(ProgressBar(this))
+        text(content, "Logowanie…")
+        pending = worker.submit {
+            val result = runCatching {
+                val config = fetchConnection()
+                DashboardAccess.parse(DashboardApi.profile(config))
+                config
+            }
+            runOnUiThread {
+                if (isDestroyed || generation != request) return@runOnUiThread
+                result.fold(onSuccess = { config ->
                     try {
-                        if (requestedBackup) renderBackup(data) else renderLibrus(data)
-                        text(content, "Odczyt: ${date(data.value("generated_at"))}", 12).setTextColor(muted)
+                        store.save(config)
+                        connection = config
+                        selectedDashboard = Dashboard.LIBRUS
+                        refresh()
                     } catch (_: Exception) {
-                        content.removeAllViews()
-                        text(card("Nie udało się wyświetlić danych"), "Serwer zwrócił niezgodną odpowiedź API.")
+                        refresh()
+                        Toast.makeText(this, "Nie udało się bezpiecznie zapisać połączenia.", Toast.LENGTH_LONG).show()
                     }
                 }, onFailure = { error ->
-                    val message = if (error is IllegalStateException || error is IllegalArgumentException)
-                        error.message ?: "Nieprawidłowa konfiguracja."
-                    else "Nie udało się połączyć. Sprawdź internet, adres serwera i certyfikat HTTPS."
-                    text(card("Nie udało się pobrać danych"), message)
-                    button(content, "Spróbuj ponownie") { refresh() }
+                    refresh()
+                    text(content, errorMessage(error))
                 })
             }
         }
     }
-    private fun renderBackup(data: JSONObject) {
+    private fun clearSession() {
+        store.clear()
+        generation++
+        pending?.cancel(true)
+        connection = null
+        access = null
+        selectedDashboard = Dashboard.LIBRUS
+        refresh()
+    }
+    private fun confirmLogout() {
+        AlertDialog.Builder(this).setTitle("Wylogować się?")
+            .setMessage("Dane logowania zostaną usunięte z tego telefonu. Aby wrócić, zaloguj się ponownie lub zeskanuj kod QR.")
+            .setPositiveButton("Wyloguj") { _, _ ->
+                try { clearSession() } catch (_: Exception) {
+                    Toast.makeText(this, "Nie udało się usunąć danych logowania. Spróbuj ponownie.", Toast.LENGTH_LONG).show()
+                }
+            }.setNegativeButton("Anuluj", null).show()
+    }
+    private fun renderMonitoring(data: JSONObject) {
         val summary = data.getJSONObject("summary")
-        text(card("Podsumowanie backupu", mint), "Sprawne: ${summary.getInt("healthy")} / ${summary.getInt("total")}")
+        text(card("Monitoring", mint), "Sprawne: ${summary.getInt("healthy")} / ${summary.getInt("total")}")
         val services = data.getJSONArray("services")
         if (services.length() == 0) text(card("Brak usług"), "Nie ma usług dostępnych dla tego tokenu.")
         services.objects { item ->
@@ -182,7 +256,14 @@ class MainActivity : ComponentActivity() {
                 0 -> Color.rgb(21, 128, 61); 3 -> muted; else -> Color.rgb(185, 28, 28)
             })
             text(box, "${item.getString("owner")} · ${item.getString("name")}")
-            text(box, "Ostatni raport: ${date(item.value("last_check_at"))}", 14)
+            val report = item.optJSONObject("latest_report")
+            if (report == null) text(box, "Brak raportu.", 14)
+            else {
+                text(box, "Ostatni raport: ${date(report.value("checked_at"))}", 14, true)
+                val code = report.optInt("status_code", -1)
+                text(box, "Wynik raportu: ${when (code) { 0 -> "OK"; 1 -> "Ostrzeżenie"; 2 -> "Błąd"; else -> code.toString() }}", 14)
+                text(box, report.value("summary").ifBlank { "Raport nie zawiera podsumowania." }, 14)
+            }
         }
     }
     private fun renderLibrus(data: JSONObject) {
@@ -257,42 +338,37 @@ class MainActivity : ComponentActivity() {
             .setPrompt("Zeskanuj kod logowania do aplikacji z panelu zaproszeń")
             .setBeepEnabled(false).setBarcodeImageEnabled(false).setOrientationLocked(false))
     }
-    private fun settings() {
+    private fun loginDialog() {
         val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(8)) }
-        fun field(label: String, value: String, secret: Boolean = false): EditText {
+        fun field(label: String, type: Int): EditText {
             text(fields, label, 14)
             return EditText(this).apply {
-                inputType = if (secret) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                    else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-                isSingleLine = true; setText(value); isSaveEnabled = false
+                inputType = type
+                isSingleLine = true
+                isSaveEnabled = false
                 importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
                 fields.addView(this)
             }
         }
-        val url = field("Adres serwera HTTPS", connection?.baseUrl ?: "")
-        val token = field("Token użytkownika (DRF)", connection?.token ?: "", true)
-        val backupToken = field("Osobny token backupu (opcjonalnie)", connection?.backupToken ?: "", true)
-        text(fields, "Librus: konto z grupy Librus. Token telefonu pokazuje tylko jego usługę. Puste pole backupu używa tokenu użytkownika.", 12)
-        val dialog = AlertDialog.Builder(this).setTitle("Połączenie")
+        val url = field("Adres serwera HTTPS", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val username = field("Nazwa użytkownika", InputType.TYPE_CLASS_TEXT)
+        val password = field("Hasło", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val dialog = AlertDialog.Builder(this).setTitle("Logowanie")
             .setView(ScrollView(this).apply { addView(fields) })
-            .setPositiveButton("Zapisz", null).setNegativeButton("Anuluj", null)
-            .setNeutralButton("Wyloguj") { _, _ -> store.clear(); connection = null; refresh() }.create()
+            .setPositiveButton("Zaloguj", null).setNegativeButton("Anuluj", null).create()
         dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 try {
-                    val newConnection = Connection(DashboardApi.normalizeUrl(url.text.toString()),
-                        token.text.toString().trim(), backupToken.text.toString().trim())
-                    require(newConnection.token.isNotBlank() || newConnection.backupToken.isNotBlank()) { "Wpisz przynajmniej jeden token." }
-                    require(listOf(newConnection.token, newConnection.backupToken).all {
-                        it.isBlank() || it.matches(Regex("[a-fA-F0-9]{40}"))
-                    }) { "Token DRF powinien mieć 40 znaków szesnastkowych." }
-                    store.save(newConnection); connection = newConnection
-                    dialog.dismiss(); refresh()
-                } catch (error: IllegalArgumentException) {
-                    Toast.makeText(this, error.message ?: "Sprawdź adres i token.", Toast.LENGTH_LONG).show()
+                    val baseUrl = DashboardApi.normalizeUrl(url.text.toString())
+                    val login = username.text.toString().trim()
+                    val secret = password.text.toString()
+                    require(login.isNotBlank() && secret.isNotEmpty())
+                    password.text.clear()
+                    dialog.dismiss()
+                    beginLogin { DashboardApi.login(baseUrl, login, secret) }
                 } catch (_: Exception) {
-                    Toast.makeText(this, "Nie udało się bezpiecznie zapisać ustawień.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Wpisz adres HTTPS, nazwę użytkownika i hasło.", Toast.LENGTH_LONG).show()
                 }
             }
         }

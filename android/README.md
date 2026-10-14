@@ -1,7 +1,7 @@
 # Domowy dashboard — Android / Kotlin
 
 Prosta natywna aplikacja (Android 8.0+) z pastelowymi kartami i przyciskami,
-wektorową ikoną domku, przełącznikiem Librus / Backup i logowaniem kodem QR. Nie wymaga WebView ani
+wektorową ikoną domku, zakładkami Librus / Monitoring oraz logowaniem hasłem Django lub kodem QR. Nie wymaga WebView ani
 logowania hasłem do Librusa. Nie uruchamia kopii i synchronizacji — czyta dane Django.
 
 ## Uruchomienie
@@ -25,18 +25,25 @@ logowania hasłem do Librusa. Nie uruchamia kopii i synchronizacji — czyta dan
    na użycie aparatu i zeskanuj kod logowania. Aplikacja pokaże nazwę serwera
    do potwierdzenia, a potem zapisze adres i token razem. Kod instalatora
    Termuxa jest innym kodem i nie służy do logowania do aplikacji.
-5. Wpisywanie danych ręcznie nadal jest dostępne w ustawieniach: bazowy adres
-   serwera, np. `https://twoja-domena.pl` (bez `/api/v1/`), oraz token DRF
-   użytkownika, bez prefiksu `Token`.
-6. Opcjonalnie podaj osobny token telefonu dla zakładki Backup. Puste pole
-   oznacza użycie tego samego tokenu co w zakładce Librus. Możesz również
-   skonfigurować wyłącznie token backupu.
+5. Alternatywnie wybierz „Zaloguj się hasłem” i wpisz adres serwera HTTPS,
+   nazwę użytkownika i hasło konta Django. Aplikacja automatycznie pobiera token;
+   jego wartości nie można podejrzeć ani ręcznie edytować.
+6. Dostępne zakładki wynikają z uprawnień pobranych z serwera:
+   grupa `Librus` daje Librusa, grupa `Monitoring` daje Monitoring, obie grupy
+   dają oba widoki. Superuser widzi oba. Konta techniczne nie mają dostępu
+   do tych zakładek. Konto z samą grupą `Monitoring` otwiera od razu Monitoring.
+7. „Wyloguj” wyświetla potwierdzenie. Po zaakceptowaniu aplikacja usuwa
+   zapisany adres i token oraz klucz szyfrowania, czyści dane na ekranie
+   i wraca do logowania hasłem/QR. Anulowanie zachowuje sesję. Opóźniona
+   odpowiedź wcześniejszego żądania nie przywraca danych po wylogowaniu.
 
 Aplikacja nie odczytuje automatycznie prywatnych plików Termuxa ani danych innych
-aplikacji. Token można zeskanować z kodu QR lub wkleić w ustawieniach. Nie jest zaszyty w APK ani repozytorium.
-Adres i tokeny są razem szyfrowane AES-GCM, klucz jest w Android Keystore.
+aplikacji. Token jest pobierany przy logowaniu lub odczytywany z QR, bez pokazywania jego wartości. Nie jest zaszyty w APK ani repozytorium.
+Adres i token są razem szyfrowane AES-GCM, klucz jest w Android Keystore.
+Hasło służy wyłącznie do logowania i nie jest zapisywane.
 Kopie danych aplikacji i zrzuty jej ekranu są wyłączone. Wylogowanie usuwa zapisane
-połączenie. Dane raportów są przechowywane tylko w pamięci; bez internetu ekran
+połączenie lokalnie; nie unieważnia tokenu na serwerze ani sesji innych urządzeń.
+Dane raportów są przechowywane tylko w pamięci; bez internetu ekran
 pokazuje błąd i przycisk ponowienia. Żądania mają timeouty i nie są automatycznie
 ponawiane ani przekierowywane. Wymagany jest HTTPS z poprawnym certyfikatem.
 
@@ -46,7 +53,7 @@ Panel zachowuje dotychczasowy link i QR instalatora. Dodatkowy QR logowania jest
 wyświetlany dla zaproszeń nieużytych i niearchiwalnych. Zobaczyć go może opiekun
 zaproszenia albo superuser. Nieaktywne i techniczne konta nie otrzymują QR
 logowania jako użytkownik. Kod zawiera token opiekuna, a nie token telefonu;
-uprawnienia do Librusa nadal wynikają z grupy `Librus` lub konta superusera.
+uprawnienia nadal wynikają z grup `Librus` / `Monitoring` lub konta superusera.
 
 Format kodu (JSON, przykład bez rzeczywistego tokenu):
 
@@ -61,8 +68,8 @@ Format kodu (JSON, przykład bez rzeczywistego tokenu):
 
 Skanowanie jest lokalne, przez bibliotekę ZXing Android Embedded; obraz nie jest
 wysyłany do serwisu zewnętrznego. Błędny kod lub anulowanie skanowania zachowuje
-obecne połączenie. Nowy kod po potwierdzeniu zastępuje całe zapisane połączenie,
-w tym usuwa opcjonalny token backupu poprzedniego serwera. Wymagany jest HTTPS.
+obecne połączenie. Zmiana konta wymaga wylogowania; przy nowym logowaniu kod jest sprawdzany
+przez API przed zapisaniem połączenia. Nie ma już osobnego tokenu backupu. Wymagany jest HTTPS.
 Kod zawiera dane dostępowe; nie publikuj go ani nie przekazuj osobom bez uprawnień.
 
 Widok Librusa pokazuje: stan synchronizacji, wspólną listę 10 najnowszych
@@ -78,8 +85,8 @@ zwraca aktywność osobno dla każdego dziecka; aplikacja łączy ją bez zmiany
 
 ## API v1
 
-Oba endpointy obsługują `GET` (także `HEAD` i `OPTIONS`) i zwracają JSON
-z `Cache-Control: no-store`. Autoryzacja:
+Widoki dashboardów i profilu obsługują `GET` (także `HEAD` i `OPTIONS`)
+i zwracają JSON z `Cache-Control: no-store`. Autoryzacja:
 
 ```http
 Authorization: Token <istniejący-token-DRF>
@@ -95,13 +102,20 @@ Token techniczny synchronizacji Librusa nie jest tokenem do przeglądania danych
 
 | Endpoint | Uprawnienia i zakres |
 | --- | --- |
+| `POST /api/v1/auth/login/` | JSON `{username, password}` konta Django; odpowiedź `{token, name, permissions}`. Tylko aktywne konta z dostępem do co najmniej jednego widoku. Istniejący token jest wykorzystywany ponownie; w razie braku zostaje utworzony. Limit 5 żądań/minutę na adres klienta. |
+| `GET /api/v1/auth/me/` | Uwierzytelniony profil `{name, permissions: {librus, monitoring}}`, bez tokenu. Zakładki są sprawdzane przy każdym odświeżeniu, a API niezależnie sprawdza uprawnienia przy pobraniu danych. |
 | `GET /api/v1/librus/dashboard/` | Superuser lub użytkownik z grupy `Librus`; wszystkie dzieci, analogicznie do wspólnych powiadomień tej grupy. Konta techniczne i konta powiązane z usługami są odrzucane. |
-| `GET /api/v1/backup/dashboard/` | Użytkownik: własne niearchiwalne usługi; superuser: wszystkie niearchiwalne usługi; token techniczny: tylko przypisana usługa. |
+| `GET /api/v1/monitoring/dashboard/` | Superuser lub użytkownik z grupy `Monitoring`; wszystkie niearchiwalne usługi, tak jak zakres powiadomień grupy Monitoring. Konta techniczne nie mają dostępu. |
+| `GET /api/v1/backup/dashboard/` | Poprzedni endpoint zachowany dla zgodności: użytkownik widzi własne niearchiwalne usługi, superuser wszystkie, konto techniczne przypisaną usługę. Nowa aplikacja nie korzysta z tego endpointu. |
 
-Zakładka Backup, tak jak istniejący dashboard WWW, podsumowuje usługi monitoringu
-(nie filtruje po nazwie `backup`). Statusy są wyliczane przez istniejący mechanizm
-monitoringu, również na podstawie wieku ostatniego raportu. API nie zwraca zaproszeń,
-linków instalacyjnych, tokenów, surowych logów ani dowolnej treści raportu synchronizacji.
+Monitoring pokazuje bieżący status każdej usługi oraz jej ostatni raport:
+datę, kod wyniku i podsumowanie. API przekazuje tekst pól `summary` / `error`,
+nazwy i kody nieudanych zadań backupu oraz wyniki synchronizacji dzieci.
+Pola z tokenami, surowe logi i dowolne nieznane elementy payloadu nie są zwracane;
+40-znakowe tokeny DRF w tekście podsumowania są maskowane. Brak rozpoznanych pól
+jest opisany jako „Raport nie zawiera podsumowania”. Brak raportów to `null`.
+Status monitoringu jest wyliczany przez istniejący mechanizm, także według wieku
+raportu, i może różnić się od kodu ostatniego wykonania. Odczyt nie uruchamia alertów.
 
 ### Format Librusa
 
@@ -115,17 +129,18 @@ linków instalacyjnych, tokenów, surowych logów ani dowolnej treści raportu s
 - `activity`: maksymalnie 10 najnowszych wiadomości/ogłoszeń łącznie na dziecko,
   `{id, kind, date, sender, title, content}`. `sender`, `title`, `content` mogą być `null`.
 
-### Format backupu
+### Format Monitoringu
 
 - `generated_at`: data odczytu, ISO 8601.
 - `summary`: `{total, healthy}` — liczba usług i liczba ze statusem OK.
 - `services`: lista `{id, name, description, owner, status_code, status,
-  last_check_at, last_result_code}`. Daty i wynik ostatniego raportu mogą być `null`.
+  last_check_at, last_result_code, latest_report}`. Daty i wynik ostatniego raportu mogą być `null`.
+- `latest_report`: `null` lub `{checked_at, status_code, summary}` ostatniego raportu usługi.
 - `status_code`: `0` OK, `1` PREFAIL, `2` FAIL, `3` INACTIVE, `4` ERROR.
   `last_result_code` jest kodem raportu, a nie wyliczonym statusem monitoringu.
 
 Błędy: `401` brak/błędny token lub nieaktywne konto, `403` brak uprawnień,
-`405` niedozwolona metoda; odpowiedź DRF zawiera `detail`. Puste zbiory to `200`
+`405` niedozwolona metoda, `429` limit żądań logowania; odpowiedź DRF zawiera `detail`. Puste zbiory to `200`
 z pustą listą. Odświeżanie nie wykonuje zapisów, nie wysyła wiadomości ani nie
 kontaktuje się z zewnętrznym Librusem.
 
@@ -140,10 +155,11 @@ venv/bin/python manage.py check --settings=mysite.settings.dev
 venv/bin/python manage.py test --settings=mysite.settings.dev
 ```
 
-W środowisku przygotowania zmian pełne 107 testów Django przeszło, w tym testy
+W środowisku przygotowania zmian pełne 114 testów Django przeszło, w tym testy
 kodów QR (uprawnienia, brak tokenu w czytelnym HTML, CSRF, brak zapisu przy GET,
-ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń). Kotlin skompilowano,
-9 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
+ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń), logowania hasłem,
+uprawnień grup oraz ostatnich raportów Monitoringu. Kotlin skompilowano,
+13 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
 (z ostrzeżeniami dotyczącymi m.in. stylu kodu i wersji bibliotek):
 
 ```sh
@@ -151,14 +167,16 @@ ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń). Kotlin skompilowano
 ```
 
 Przebudowanie APK i instalację po zmianach wykonuje użytkownik w Android Studio.
-Nowego skanowania aparatem i wyglądu nie zweryfikowano jeszcze na telefonie.
+Nowego logowania, wylogowania i uprawnień interfejsu nie zweryfikowano jeszcze
+na telefonie; konieczne jest też wdrożenie nowych endpointów backendu.
 Wrapper pobrano z repozytorium Gradle, jego JAR sprawdzono oficjalną sumą SHA-256;
 konfiguracja przypina również sumę dystrybucji Gradle.
 
 Przed użyciem należy zbudować aplikację i sprawdzić na urządzeniu: skanowanie QR,
 odmowę uprawnień aparatu, anulowanie skanowania, zapis/odczyt
-ustawień po ponownym uruchomieniu, oba widoki, rozwijanie wiadomości, obrót ekranu,
-brak internetu, błędny token, brak uprawnień oraz wylogowanie. Backend nie został
+sesji po ponownym uruchomieniu, widoki według grup, ostatnie raporty, rozwijanie wiadomości, obrót ekranu,
+brak internetu, błędne hasło, brak uprawnień, anulowanie wylogowania oraz
+potwierdzenie wylogowania podczas pobierania danych. Backend nie został
 wdrożony na produkcję; nie zmieniono żadnych istniejących tokenów ani uprawnień.
 
 Dokumentacja użytych mechanizmów: [zgodność AGP 8.9 / Gradle](https://developer.android.com/build/releases/agp-8-9-0-release-notes),

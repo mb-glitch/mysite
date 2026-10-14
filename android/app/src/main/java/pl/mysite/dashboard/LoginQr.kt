@@ -17,6 +17,6 @@ object LoginQr {
         val url = try { DashboardApi.normalizeUrl(json.optString("server_url")) } catch (_: Exception) {
             throw IllegalArgumentException("Kod QR musi zawierać poprawny adres serwera HTTPS.")
         }
-        return Connection(url, token, "")
+        return Connection(url, token)
     }
 }

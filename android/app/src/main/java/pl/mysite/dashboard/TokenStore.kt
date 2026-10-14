@@ -11,7 +11,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-data class Connection(val baseUrl: String, val token: String, val backupToken: String)
+data class Connection(val baseUrl: String, val token: String)
 
 /** Credentials are encrypted together, binding the tokens to the saved server. */
 class TokenStore(context: Context) {
@@ -29,8 +29,7 @@ class TokenStore(context: Context) {
     fun save(value: Connection) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        val data = JSONObject().put("url", value.baseUrl).put("token", value.token)
-            .put("backup", value.backupToken).toString().toByteArray(Charsets.UTF_8)
+        val data = JSONObject().put("url", value.baseUrl).put("token", value.token).toString().toByteArray(Charsets.UTF_8)
         check(prefs.edit().putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString("data", Base64.encodeToString(cipher.doFinal(data), Base64.NO_WRAP)).commit())
     }
@@ -40,7 +39,10 @@ class TokenStore(context: Context) {
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128,
             Base64.decode(prefs.getString("iv", ""), Base64.NO_WRAP)))
         val json = JSONObject(String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), Charsets.UTF_8))
-        return Connection(json.getString("url"), json.getString("token"), json.optString("backup"))
+        return Connection(json.getString("url"), json.getString("token"))
     }
-    fun clear() { prefs.edit().clear().commit() }
+    fun clear() {
+        check(prefs.edit().clear().commit()) { "Nie udało się usunąć danych logowania." }
+        runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) } }
+    }
 }
