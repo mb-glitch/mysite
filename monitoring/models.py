@@ -133,14 +133,14 @@ class MonitoredService(models.Model):
         delay = (now - latest_log.checked_at).total_seconds()
 
         interval = self._get_timeout_seconds()
-        # Brak raportów przez ponad trzy interwały ma pierwszeństwo przed
+        # Brak raportów przez ponad sześć interwałów ma pierwszeństwo przed
         # wynikiem ostatniego wykonania. Nie wydłużamy interwału w weekendy.
-        if interval <= 0 or delay > interval * 3:
+        if interval <= 0 or delay > interval * 6:
             return 2
         # Zgłoszony błąd nie może zmienić się w łagodniejszy PREFAIL z upływem czasu.
         if latest_log.status_code == 2:
             return 4
-        if delay > interval or latest_log.status_code == 1:
+        if delay > interval * 3 or latest_log.status_code == 1:
             return 1
         return 0
 

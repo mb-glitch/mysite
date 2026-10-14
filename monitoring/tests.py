@@ -268,8 +268,9 @@ class MonitoringTests(TestCase):
                 self.service.timeout_ms = interval_ms
                 interval = interval_ms / 1000
                 for delay, expected in (
-                    (0, 0), (interval, 0), (interval + .001, 1),
-                    (interval * 3, 1), (interval * 3 + .001, 2),
+                    (0, 0), (interval, 0), (interval + .001, 0),
+                    (interval * 3, 0), (interval * 3 + .001, 1),
+                    (interval * 6, 1), (interval * 6 + .001, 2),
                 ):
                     with self.subTest(day=day, interval=interval_ms, delay=delay):
                         LogEntry.objects.filter(pk=log.pk).update(checked_at=now - timedelta(seconds=delay))
@@ -279,7 +280,7 @@ class MonitoringTests(TestCase):
     def test_error_does_not_become_warning_before_fail(self):
         now = timezone.now()
         log = LogEntry.objects.create(service=self.service, status_code=2)
-        for delay, expected in ((0, 4), (61, 4), (180, 4), (181, 2)):
+        for delay, expected in ((0, 4), (61, 4), (180, 4), (181, 4), (360, 4), (361, 2)):
             with self.subTest(delay=delay):
                 LogEntry.objects.filter(pk=log.pk).update(checked_at=now - timedelta(seconds=delay))
                 with patch('monitoring.models.timezone.now', return_value=now):
@@ -313,7 +314,7 @@ class MonitoringTests(TestCase):
         deliver_pending()
         send_mail.reset_mock()
         received_at = self.service.logs.latest('pk').checked_at
-        for seconds, expected in ((61, 1), (120, 1), (181, 2), (240, 2)):
+        for seconds, expected in ((61, 0), (180, 0), (181, 1), (240, 1), (360, 1), (361, 2), (420, 2)):
             with patch('monitoring.models.timezone.now', return_value=received_at + timedelta(seconds=seconds)):
                 call_command('monitoring_sprawdz')
             self.service.refresh_from_db()
@@ -360,8 +361,8 @@ class MonitoringTests(TestCase):
         now = timezone.now()
         for delay, code, active, expected, label in (
             (0, 0, True, 0, 'OK'),
-            (61, 0, True, 1, 'PREFAIL'),
-            (181, 0, True, 2, 'FAIL'),
+            (181, 0, True, 1, 'PREFAIL'),
+            (361, 0, True, 2, 'FAIL'),
             (0, 2, True, 4, 'ERROR'),
             (0, 2, False, 3, 'INACTIVE'),
         ):

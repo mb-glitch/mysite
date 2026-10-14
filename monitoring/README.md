@@ -12,10 +12,10 @@ Termin liczymy od odebrania ostatniego raportu, jednakowo we wszystkie dni:
 | Status | Warunek |
 | --- | --- |
 | INACTIVE | Wyłączona usługa lub konto techniczne. |
-| OK | Raport mieści się w interwale i nie zgłasza ostrzeżenia ani błędu. |
-| PREFAIL | Upłynął ponad jeden, ale nie więcej niż trzy interwały, albo ostatni raport zgłosił ostrzeżenie. |
-| FAIL | Upłynęły ponad trzy interwały lub usługa nigdy nie przesłała raportu. |
-| ERROR | Ostatni raport zgłosił błąd; pozostaje ERROR do nowego raportu lub przekroczenia trzech interwałów (wtedy FAIL). |
+| OK | Od ostatniego raportu upłynęły najwyżej trzy interwały i nie zgłasza ostrzeżenia ani błędu. |
+| PREFAIL | Upłynął ponad trzy, ale nie więcej niż sześć interwałów, albo ostatni raport zgłosił ostrzeżenie. |
+| FAIL | Upłynęło ponad sześć interwałów lub usługa nigdy nie przesłała raportu. |
+| ERROR | Ostatni raport zgłosił błąd; pozostaje ERROR do nowego raportu lub przekroczenia sześciu interwałów (wtedy FAIL). |
 
 `POST /api/monitoring/` wymaga nagłówka `Authorization: Token <token>`.
 Puste zgłoszenie lub JSON bez `status_code` oznacza sukces. Pole `status_code`
