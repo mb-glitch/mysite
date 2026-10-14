@@ -93,7 +93,8 @@ Authorization: Token <istniejący-token-DRF>
 Accept: application/json
 ```
 
-Nie dodano modeli ani migracji. Panel udostępnia sesyjny, chroniony CSRF endpoint
+Logowanie i dashboardy korzystają z istniejących modeli. Integracja push dodaje
+modele i migrację opisane w [notifications/README.md](../notifications/README.md). Panel udostępnia sesyjny, chroniony CSRF endpoint
 `POST /backupapp/invitations/<id>/mobile-token/`, który tworzy token DRF użytkownika zaproszenia
 lub wykorzystuje już istniejący. Wymaga logowania użytkownika zaproszenia albo superusera oraz
 aktywnego zaproszenia. Odczyt panelu i API nie tworzy tokenów, a ponowne użycie
@@ -103,7 +104,7 @@ Token techniczny synchronizacji Librusa nie jest tokenem do przeglądania danych
 | Endpoint | Uprawnienia i zakres |
 | --- | --- |
 | `POST /api/v1/auth/login/` | JSON `{username, password}` konta Django; odpowiedź `{token, name, permissions}`. Tylko aktywne konta z dostępem do co najmniej jednego widoku. Istniejący token jest wykorzystywany ponownie; w razie braku zostaje utworzony. Limit 5 żądań/minutę na adres klienta. |
-| `GET /api/v1/auth/me/` | Uwierzytelniony profil `{name, permissions: {librus, monitoring}}`, bez tokenu. Zakładki są sprawdzane przy każdym odświeżeniu, a API niezależnie sprawdza uprawnienia przy pobraniu danych. |
+| `GET /api/v1/auth/me/` | Uwierzytelniony profil `{id, name, permissions: {librus, monitoring}}`, bez tokenu. Zakładki są sprawdzane przy każdym odświeżeniu, a API niezależnie sprawdza uprawnienia przy pobraniu danych. |
 | `GET /api/v1/librus/dashboard/` | Superuser lub użytkownik z grupy `Librus`; wszystkie dzieci, analogicznie do wspólnych powiadomień tej grupy. Konta techniczne i konta powiązane z usługami są odrzucane. |
 | `GET /api/v1/monitoring/dashboard/` | Superuser lub użytkownik z grupy `Monitoring`; wszystkie niearchiwalne usługi, tak jak zakres powiadomień grupy Monitoring. Konta techniczne nie mają dostępu. |
 | `GET /api/v1/backup/dashboard/` | Poprzedni endpoint zachowany dla zgodności: użytkownik widzi własne niearchiwalne usługi, superuser wszystkie, konto techniczne przypisaną usługę. Nowa aplikacja nie korzysta z tego endpointu. |
@@ -155,11 +156,11 @@ venv/bin/python manage.py check --settings=mysite.settings.dev
 venv/bin/python manage.py test --settings=mysite.settings.dev
 ```
 
-W środowisku przygotowania zmian pełne 118 testów Django przeszło, w tym testy
+W środowisku przygotowania zmian pełne 132 testy Django przeszły, w tym testy
 kodów QR (uprawnienia, brak tokenu w czytelnym HTML, CSRF, brak zapisu przy GET,
 ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń), logowania hasłem,
 uprawnień grup oraz ostatnich raportów Monitoringu. Kotlin skompilowano,
-13 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
+16 testów jednostkowych Androida przeszło, a Android Lint zakończył się bez błędów
 (z ostrzeżeniami dotyczącymi m.in. stylu kodu i wersji bibliotek):
 
 ```sh
@@ -182,3 +183,11 @@ wdrożony na produkcję; nie zmieniono żadnych istniejących tokenów ani upraw
 Dokumentacja użytych mechanizmów: [zgodność AGP 8.9 / Gradle](https://developer.android.com/build/releases/agp-8-9-0-release-notes),
 [Android Keystore](https://developer.android.com/privacy-and-security/keystore),
 [ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded).
+
+## Powiadomienia Firebase
+
+Konfiguracja, wdrożenie i diagnostyka: [notifications/README.md](../notifications/README.md).
+APK używa applicationId `com.macbilicki.domowydashboard`, zgodnego z konfiguracją
+Firebase użytkownika. Dawna aplikacja `pl.mysite.dashboard` pozostaje osobną
+instalacją; w nowej trzeba zalogować się ponownie. Zgoda na powiadomienia
+Androida jest wymagana. Kliknięcie powiadomienia otwiera odpowiednią zakładkę.

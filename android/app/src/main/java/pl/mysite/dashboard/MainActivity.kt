@@ -1,5 +1,10 @@
 package pl.mysite.dashboard
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,6 +22,8 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import java.net.URI
@@ -26,6 +33,10 @@ class MainActivity : ComponentActivity() {
     private var connection: Connection? = null
     private var selectedDashboard = Dashboard.LIBRUS
     private var access: DashboardAccess? = null
+    private var pushStarted = false
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) configurePush()
+    }
     private var generation = 0
     private val worker = Executors.newSingleThreadExecutor()
     private var pending: Future<*>? = null
@@ -61,6 +72,7 @@ class MainActivity : ComponentActivity() {
         store = TokenStore(this)
         connection = try { store.load() } catch (_: Exception) { store.clear(); null }
         selectedDashboard = if (savedInstanceState?.getBoolean("monitoring") == true) Dashboard.MONITORING else Dashboard.LIBRUS
+        notificationTarget(intent)?.let { selectedDashboard = it }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(255, 248, 242))
@@ -84,6 +96,35 @@ class MainActivity : ComponentActivity() {
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         refresh()
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationTarget(intent)?.let { selectedDashboard = it }
+        refresh()
+    }
+    private fun notificationTarget(intent: Intent): Dashboard? = when (intent.getStringExtra("dashboard")) {
+        "librus" -> Dashboard.LIBRUS
+        "monitoring" -> Dashboard.MONITORING
+        else -> null
+    }
+    private fun configurePush() {
+        if (pushStarted || connection == null || !PushClient.configured(this) ||
+            !(access?.librus == true || access?.monitoring == true)) return
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this,
+                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            val prefs = getSharedPreferences("push", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("permission_requested", false)) {
+                prefs.edit().putBoolean("permission_requested", true).apply()
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            return
+        }
+        pushStarted = true
+        val registeredConnection = connection
+        PushClient.register(this) { success ->
+            if (!isDestroyed && connection == registeredConnection) pushStarted = success
+        }
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("monitoring", selectedDashboard == Dashboard.MONITORING)
@@ -163,6 +204,7 @@ class MainActivity : ComponentActivity() {
                     access = permissions
                     if (selected != null) selectedDashboard = selected
                     updateControls()
+                    configurePush()
                     if (selected == null || dashboardResult == null) {
                         text(card("Brak dostępnych widoków"), "Poproś administratora o dodanie konta do grupy Librus lub Monitoring.")
                     } else dashboardResult.fold(onSuccess = { data ->
@@ -211,7 +253,8 @@ class MainActivity : ComponentActivity() {
                 if (isDestroyed || generation != request) return@runOnUiThread
                 result.fold(onSuccess = { config ->
                     try {
-                        store.save(config)
+                        synchronized(PushClient.sessionLock) { store.save(config) }
+                        pushStarted = false
                         connection = config
                         selectedDashboard = Dashboard.LIBRUS
                         refresh()
@@ -227,7 +270,8 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun clearSession() {
-        store.clear()
+        PushClient.logout(this, connection) { store.clear() }
+        pushStarted = false
         generation++
         pending?.cancel(true)
         connection = null

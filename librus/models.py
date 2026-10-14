@@ -82,6 +82,9 @@ class Ocena(models.Model):
         self.powiadomienie_status = self.POWIADOMIENIE_WYSLANE
         self.powiadomiono_at = timezone.now()
         self.save(update_fields=['powiadomienie_status', 'powiadomiono_at'])
+        from notifications.services import queue_group_push
+        queue_group_push(group='Librus', event_key=f'librus-grade:{self.pk}',
+                         title='Librus — nowa ocena', body='Nowa ocena jest dostępna w aplikacji.')
         return True
 
 
@@ -152,6 +155,9 @@ class Wiadomosc(models.Model):
                 self.wyslane = True
                 self.sent_at = timezone.now()
                 self.save()
+                from notifications.services import queue_group_push
+                queue_group_push(group='Librus', event_key=f'librus-message:{self.pk}',
+                                 title='Librus — nowa wiadomość', body='Nowa wiadomość jest dostępna w aplikacji.')
                 logger.info(f"Wysłano: {self.temat} ({self.dziecko})")
                 return True
         except Exception as e:
@@ -202,6 +208,9 @@ class Ogloszenie(models.Model):
                 self.wyslane = True
                 self.sent_at = timezone.now()
                 self.save()
+                from notifications.services import queue_group_push
+                queue_group_push(group='Librus', event_key=f'librus-announcement:{self.pk}',
+                                 title='Librus — nowe ogłoszenie', body='Nowe ogłoszenie jest dostępne w aplikacji.')
                 logger.info(f"Wysłano: {self.tytul} ({self.dziecko})")
                 return True
         except Exception as e:

@@ -6,3 +6,6 @@ local.properties
 *.jks
 *.keystore
 .idea/
+
+# Per-project Firebase Android configuration
+app/google-services.json

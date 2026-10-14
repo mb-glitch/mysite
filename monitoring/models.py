@@ -194,6 +194,10 @@ class MonitoredService(models.Model):
                 self.last_status = current_status
                 self.last_change_at = timezone.now()
                 self.save(update_fields=["last_status", "last_change_at"])
+                from notifications.services import queue_group_push
+                queue_group_push(group='Monitoring', event_key=f'monitoring:{self.pk}:{self.last_change_at.isoformat()}',
+                                 title=f'Monitoring — {current_status_display}',
+                                 body='Zmienił się stan usługi. Szczegóły znajdziesz w aplikacji.')
                 return True
             except Exception as e:
                 logger.error(f"Błąd wysyłki e-mail: {e}")

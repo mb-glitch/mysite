@@ -18,3 +18,6 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+# Local checks must never send real Firebase notifications.
+FCM_ENABLED = False

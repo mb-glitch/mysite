@@ -22,6 +22,7 @@ from .mobile_api import (
 )
 
 urlpatterns = [
+    path('api/v1/push/devices/<uuid:device_id>/', include('notifications.device_urls')),
     path('api/v1/auth/login/', MobileLoginView.as_view(), name='api-v1-mobile-login'),
     path('api/v1/auth/me/', MobileProfileView.as_view(), name='api-v1-mobile-profile'),
     path('api/v1/monitoring/dashboard/', MonitoringDashboardView.as_view(), name='api-v1-monitoring-dashboard'),

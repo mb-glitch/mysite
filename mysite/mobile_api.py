@@ -43,7 +43,7 @@ def mobile_permissions(user):
 
 class MobileProfileView(DashboardView):
     def get(self, request):
-        return Response({'name': request.user.get_full_name() or request.user.username,
+        return Response({'id': request.user.pk, 'name': request.user.get_full_name() or request.user.username,
                          'permissions': mobile_permissions(request.user)})
 
 

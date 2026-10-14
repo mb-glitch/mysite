@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'backupapp',
     'librus',
     'monitoring',
+    'notifications',
     # póxniej usunąć
     'django_extensions',
 ]
@@ -179,6 +180,7 @@ LIBRUS_SESSION_DIR = Path(os.getenv('LIBRUS_SESSION_DIR', str(BASE_DIR / '.libru
 BACKUP_PI_HOST = '192.168.0.131'  # Stały adres Raspberry Pi
 BACKUP_PI_USER = 'smerf'
 
+# Firebase is opt-in; private credentials stay outside version control.
 FCM_ENABLED = os.getenv('FCM_ENABLED', '0') == '1'
 FCM_SEND_IMMEDIATELY = os.getenv('FCM_SEND_IMMEDIATELY', '1') == '1'
 # Ścieżki względne odnoszą się do projektu, niezależnie od katalogu procesu.
@@ -189,4 +191,3 @@ FIREBASE_CREDENTIALS_FILE = str(
     _firebase_credentials if _firebase_credentials.is_absolute()
     else BASE_DIR / _firebase_credentials
 )
-

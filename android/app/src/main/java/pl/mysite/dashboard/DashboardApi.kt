@@ -26,11 +26,18 @@ object DashboardApi {
     fun load(config: Connection, dashboard: Dashboard): JSONObject =
         request(config.baseUrl, "${if (dashboard == Dashboard.MONITORING) "monitoring" else "librus"}/dashboard", config.token)
 
-    private fun request(baseUrl: String, path: String, token: String? = null, body: JSONObject? = null): JSONObject {
+    fun registerPush(config: Connection, deviceId: String, token: String) {
+        request(config.baseUrl, "push/devices/$deviceId", config.token, JSONObject().put("token", token), "PUT")
+    }
+    fun unregisterPush(config: Connection, deviceId: String) {
+        request(config.baseUrl, "push/devices/$deviceId", config.token, method = "DELETE")
+    }
+
+    private fun request(baseUrl: String, path: String, token: String? = null, body: JSONObject? = null, method: String? = null): JSONObject {
         if (token != null) require(token.matches(Regex("[a-fA-F0-9]{40}"))) { "Nieprawidłowe dane logowania. Zaloguj się ponownie." }
         val connection = URI("${normalizeUrl(baseUrl)}/api/v1/$path/").toURL().openConnection() as HttpsURLConnection
         try {
-            connection.requestMethod = if (body == null) "GET" else "POST"
+            connection.requestMethod = method ?: (if (body == null) "GET" else "POST")
             connection.connectTimeout = 10000
             connection.readTimeout = 15000
             connection.instanceFollowRedirects = false
@@ -44,7 +51,8 @@ object DashboardApi {
             }
             val status = connection.responseCode
             when (status) {
-                200 -> return connection.inputStream.bufferedReader(Charsets.UTF_8).use { JSONObject(it.readText()) }
+                204 -> return JSONObject()
+                200, 201 -> return connection.inputStream.bufferedReader(Charsets.UTF_8).use { JSONObject(it.readText()) }
                 400 -> throw ApiException(status, "Sprawdź wpisane dane logowania.")
                 401 -> throw ApiException(status, if (body != null) "Nieprawidłowa nazwa użytkownika lub hasło."
                     else "Sesja wygasła lub konto jest nieaktywne. Zaloguj się ponownie.")
