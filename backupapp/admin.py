@@ -6,12 +6,12 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from rest_framework.authtoken.models import Token
 
 from monitoring.models import MonitoredService, is_dedicated_service_account
-from monitoring.services import provision_service_account
 from mysite.admin_filters import ArchiveFilter
-from .models import BackupInvitation
+from .models import BackupInvitation, get_backup_service_owner, provision_backup_service
 
 
 class BackupInvitationAdminForm(forms.ModelForm):
@@ -42,7 +42,7 @@ class BackupInvitationAdminForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
-        owner = cleaned.get('user')
+        app_user = cleaned.get('user')
         username = cleaned.get('service_username', '').strip()
         if self.instance.pk and cleaned.get('is_archived'):
             old_username = Token.objects.filter(key=self.instance.token_link).values_list(
@@ -51,8 +51,8 @@ class BackupInvitationAdminForm(forms.ModelForm):
             if username and old_username and username != old_username:
                 self.add_error('service_username', 'Podczas archiwizacji nie zmieniaj konta technicznego.')
             return cleaned
-        if not owner or not username:
-            if owner and not username:
+        if not app_user or not username:
+            if app_user and not username:
                 self.add_error('service_username', 'Podaj konto techniczne.')
             return cleaned
         account = User.objects.filter(username=username).first()
@@ -70,13 +70,16 @@ class BackupInvitationAdminForm(forms.ModelForm):
                 self.add_error('service_username', 'Konta technicznego istniejącego zaproszenia nie można zmienić.')
         service = MonitoredService.objects.filter(service_user=account).first() if account else None
         if account:
-            if service and service.owner_id != owner.pk:
-                self.add_error('service_username', 'To konto techniczne ma już innego opiekuna w monitoringu.')
             if Token.objects.filter(user=account, key__in=BackupInvitation.objects.exclude(
                 pk=self.instance.pk,
             ).values('token_link')).exists():
                 self.add_error('service_username', 'To konto techniczne ma już inne zaproszenie.')
         if not service:
+            try:
+                owner = get_backup_service_owner()
+            except ValidationError as error:
+                self.add_error(None, error)
+                return cleaned
             service_name = f'backup_{username}'
             if MonitoredService.objects.filter(owner=owner, service_name=service_name).exclude(
                 service_user=account,
@@ -133,16 +136,11 @@ class BackupInvitationAdmin(admin.ModelAdmin):
             return
         username = form.cleaned_data['service_username']
         old_token_link = obj.token_link
-        existing = MonitoredService.objects.filter(service_user__username=username).first()
-        service, token = provision_service_account(
-            owner=obj.user,
+        _, token = provision_backup_service(
+            app_user=obj.user,
             username=username,
-            service_name=existing.service_name if existing else f'backup_{username}',
-            description=f'Backup telefonu: {username}',
+            service_name=f'backup_{username}',
         )
-        if not existing and service.timeout_ms != 3_600_000:
-            service.timeout_ms = 3_600_000
-            service.save(update_fields=['timeout_ms'])
         obj.token_link = token.key
         if change and old_token_link != obj.token_link:
             obj.is_used = False

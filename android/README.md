@@ -19,7 +19,7 @@ logowania hasłem do Librusa. Nie uruchamia kopii i synchronizacji — czyta dan
    (Generate Signed Bundle / APK); klucza nie dodawaj do repozytorium.
 3. Backend musi mieć wdrożone endpointy i panel opisane poniżej. Otwórz panel
    backupu przez HTTPS. Przy aktywnym zaproszeniu znajdziesz osobny kod
-   „Logowanie do aplikacji Android”. Jeśli opiekun nie ma jeszcze tokenu DRF,
+   „Logowanie do aplikacji Android”. Jeśli użytkownik zaproszenia nie ma jeszcze tokenu DRF,
    użyj przycisku „Utwórz kod logowania”.
 4. Przy pierwszym uruchomieniu aplikacji wybierz „Zeskanuj kod QR”, zezwól
    na użycie aparatu i zeskanuj kod logowania. Aplikacja pokaże nazwę serwera
@@ -50,9 +50,9 @@ ponawiane ani przekierowywane. Wymagany jest HTTPS z poprawnym certyfikatem.
 ## Kody QR i układ Librusa
 
 Panel zachowuje dotychczasowy link i QR instalatora. Dodatkowy QR logowania jest
-wyświetlany dla zaproszeń nieużytych i niearchiwalnych. Zobaczyć go może opiekun
+wyświetlany dla zaproszeń nieużytych i niearchiwalnych. Zobaczyć go może użytkownik
 zaproszenia albo superuser. Nieaktywne i techniczne konta nie otrzymują QR
-logowania jako użytkownik. Kod zawiera token opiekuna, a nie token telefonu;
+logowania jako użytkownik. Kod zawiera token użytkownika zaproszenia, a nie token telefonu;
 uprawnienia nadal wynikają z grup `Librus` / `Monitoring` lub konta superusera.
 
 Format kodu (JSON, przykład bez rzeczywistego tokenu):
@@ -94,8 +94,8 @@ Accept: application/json
 ```
 
 Nie dodano modeli ani migracji. Panel udostępnia sesyjny, chroniony CSRF endpoint
-`POST /backupapp/invitations/<id>/mobile-token/`, który tworzy token DRF opiekuna
-lub wykorzystuje już istniejący. Wymaga logowania opiekuna albo superusera oraz
+`POST /backupapp/invitations/<id>/mobile-token/`, który tworzy token DRF użytkownika zaproszenia
+lub wykorzystuje już istniejący. Wymaga logowania użytkownika zaproszenia albo superusera oraz
 aktywnego zaproszenia. Odczyt panelu i API nie tworzy tokenów, a ponowne użycie
 przycisku nie zmienia istniejącego tokenu. Endpoint nie nadaje żadnych uprawnień.
 Token techniczny synchronizacji Librusa nie jest tokenem do przeglądania danych dzieci.
@@ -155,7 +155,7 @@ venv/bin/python manage.py check --settings=mysite.settings.dev
 venv/bin/python manage.py test --settings=mysite.settings.dev
 ```
 
-W środowisku przygotowania zmian pełne 114 testów Django przeszło, w tym testy
+W środowisku przygotowania zmian pełne 118 testów Django przeszło, w tym testy
 kodów QR (uprawnienia, brak tokenu w czytelnym HTML, CSRF, brak zapisu przy GET,
 ponowne użycie tokenu i ukrywanie nieaktywnych zaproszeń), logowania hasłem,
 uprawnień grup oraz ostatnich raportów Monitoringu. Kotlin skompilowano,

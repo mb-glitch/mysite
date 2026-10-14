@@ -5,9 +5,10 @@
 # ==============================================================================
 import secrets
 from django.db import models, transaction
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from rest_framework.authtoken.models import Token
-from monitoring.models import is_dedicated_service_account
+from monitoring.models import MonitoredService, is_dedicated_service_account
 from monitoring.services import provision_service_account
 
 
@@ -18,17 +19,41 @@ def generate_app_token():
     return secrets.token_hex(20)
 
 
+def get_backup_service_owner():
+    owner = User.objects.filter(username='maciek').first()
+    if owner is None:
+        raise ValidationError('Brak użytkownika maciek — nie można ustawić opiekuna nowej usługi backupu.')
+    return owner
+
+
+@transaction.atomic
+def provision_backup_service(*, app_user, username, service_name):
+    existing = MonitoredService.objects.select_related('owner').filter(service_user__username=username).first()
+    service, token = provision_service_account(
+        owner=existing.owner if existing else get_backup_service_owner(),
+        username=username,
+        service_name=existing.service_name if existing else service_name,
+        description=f'Backup telefonu użytkownika {app_user.username}',
+    )
+    if not existing and service.timeout_ms != 3_600_000:
+        service.timeout_ms = 3_600_000
+        service.save(update_fields=['timeout_ms'])
+    return service, token
+
+
 class BackupInvitation(models.Model):
     """
     Zaproszenie instalacyjne telefonu w aplikacji 'backupapp'.
     Automatycznie tworzy konto techniczne DRF (np. svc_maciek_backup)
-    i rejestruje je w MonitoredService ze wskazaniem opiekuna (człowieka).
+    i rejestruje je w MonitoredService z domyślnym opiekunem maciek.
+    Pole user wskazuje użytkownika aplikacji i wartość KTO w instalatorze.
     """
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name='backup_invitations',
-        verbose_name="Opiekun (człowiek)"
+        verbose_name="Użytkownik aplikacji (KTO)",
+        help_text="Użytkownik telefonu i katalogu backupu. Opiekunem nowej usługi monitoringu jest maciek."
     )
     token_link = models.CharField(
         max_length=64,
@@ -65,11 +90,10 @@ class BackupInvitation(models.Model):
         if not self.token_link:
             # 1. Automatyczne konto techniczne dla telefonu: svc_<username>_backup
             machine_username = f"svc_{self.user.username.lower()}_backup"
-            _, token_obj = provision_service_account(
-                owner=self.user,
+            _, token_obj = provision_backup_service(
+                app_user=self.user,
                 username=machine_username,
                 service_name=f"backup_{self.user.username.lower()}",
-                description=f"Backup telefonu użytkownika {self.user.username}",
             )
             self.token_link = token_obj.key
 

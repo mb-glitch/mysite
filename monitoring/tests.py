@@ -132,11 +132,12 @@ class MonitoringTests(TestCase):
         service, token = provision_service_account(owner=self.owner, username='svc_test', service_name='test')
         self.assertEqual(service.pk, self.service.pk)
         self.assertEqual(token.pk, self.token.pk)
+        default_owner = User.objects.create_user(username='maciek')
         invitation = BackupInvitation.objects.create(user=self.owner)
         account = User.objects.get(username='svc_owner_backup')
         self.assertFalse(account.has_usable_password())
         self.assertEqual(invitation.token_link, Token.objects.get(user=account).key)
-        self.assertTrue(MonitoredService.objects.filter(service_user=account, owner=self.owner).exists())
+        self.assertTrue(MonitoredService.objects.filter(service_user=account, owner=default_owner).exists())
 
     def test_admin_token_switch(self):
         from django.contrib.admin import site

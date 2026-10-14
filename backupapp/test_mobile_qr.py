@@ -13,6 +13,7 @@ from .views import qr_data_uri
 class MobileLoginQrTests(TestCase):
     def setUp(self):
         self.owner = User.objects.create_user('qr_owner', password='test-password')
+        User.objects.create_user('maciek', password='test-password')
         self.other = User.objects.create_user('other', password='test-password')
         self.admin = User.objects.create_superuser('admin', 'admin@example.com', 'test-password')
         self.invitation = BackupInvitation.objects.create(user=self.owner)

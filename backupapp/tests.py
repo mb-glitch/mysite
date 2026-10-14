@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.test import SimpleTestCase, RequestFactory, TestCase
 from django.urls import reverse
@@ -189,6 +190,66 @@ class BackupInvitationAdminTests(TestCase):
         self.assertFalse(account.has_usable_password())
         self.assertEqual(invitation.token_link, Token.objects.get(user=account).key)
         self.assertEqual(self.client.get(reverse('setup_phone', args=[invitation.token_link])).status_code, 200)
+
+    def test_selected_app_user_sets_kto_while_maciek_owns_new_service(self):
+        app_user = User.objects.create_user('krysia', password='test-password')
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_add'), {
+            'user': app_user.pk, 'service_username': 'svc_krysia_phone', '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        invitation = BackupInvitation.objects.get(user=app_user)
+        service = MonitoredService.objects.get(service_user=invitation.technical_user)
+        self.assertEqual(service.owner, self.owner)
+        self.assertEqual(invitation.user, app_user)
+        installer = self.client.get(reverse('setup_phone', args=[invitation.token_link]), {'raw': '1'})
+        self.assertEqual(installer.status_code, 200)
+        self.assertContains(installer, 'KTO="krysia"')
+        self.assertContains(installer, '/media/pi/elemele/krysia/_backup_tel_sync')
+        self.assertNotContains(installer, 'KTO="maciek"')
+
+    def test_model_creation_uses_same_default_owner_and_hourly_interval(self):
+        app_user = User.objects.create_user('krysia', password='test-password')
+        invitation = BackupInvitation.objects.create(user=app_user)
+        service = MonitoredService.objects.get(service_user=invitation.technical_user)
+        self.assertEqual(invitation.technical_user.username, 'svc_krysia_backup')
+        self.assertEqual(service.owner, self.owner)
+        self.assertEqual(service.timeout_ms, 3_600_000)
+        self.assertContains(self.client.get(reverse('setup_phone', args=[invitation.token_link]), {'raw': '1'}), 'KTO="krysia"')
+
+    def test_editing_invitation_preserves_existing_service_owner_token_and_interval(self):
+        app_user = User.objects.create_user('krysia', password='test-password')
+        invitation = BackupInvitation.objects.create(user=app_user)
+        service = MonitoredService.objects.get(service_user=invitation.technical_user)
+        other_owner = User.objects.create_user('other_owner', password='test-password')
+        service.owner = other_owner
+        service.timeout_ms = 86_400_000
+        service.save()
+        old_token = invitation.token_link
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_change', args=[invitation.pk]), {
+            'user': app_user.pk, 'service_username': invitation.technical_user.username, '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 302)
+        service.refresh_from_db()
+        invitation.refresh_from_db()
+        self.assertEqual(service.owner, other_owner)
+        self.assertEqual(service.timeout_ms, 86_400_000)
+        self.assertEqual(invitation.token_link, old_token)
+        self.assertContains(self.client.get(reverse('setup_phone', args=[old_token]), {'raw': '1'}), 'KTO="krysia"')
+
+    def test_missing_maciek_does_not_assign_service_to_another_user(self):
+        self.owner.delete()
+        app_user = User.objects.create_user('krysia', password='test-password')
+        response = self.client.post(reverse('admin:backupapp_backupinvitation_add'), {
+            'user': app_user.pk, 'service_username': 'svc_krysia_phone', '_save': 'Zapisz',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Brak użytkownika maciek')
+        self.assertFalse(BackupInvitation.objects.exists())
+        self.assertFalse(MonitoredService.objects.exists())
+        self.assertFalse(User.objects.filter(username='svc_krysia_phone').exists())
+        with self.assertRaises(ValidationError):
+            BackupInvitation.objects.create(user=app_user)
+        self.assertFalse(User.objects.filter(username='svc_krysia_backup').exists())
 
     def test_script_api_reports_hash_of_current_installer_script(self):
         invitation = BackupInvitation.objects.create(user=self.owner)

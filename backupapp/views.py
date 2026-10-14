@@ -87,7 +87,7 @@ def setup_phone(request, token):
     invitation = get_object_or_404(BackupInvitation.objects.select_related('user'), token_link=token_obj.key, is_archived=False)
     if token_obj.user.is_staff or token_obj.user.is_superuser or token_obj.user.has_usable_password():
         raise Http404('Zaproszenie wymaga konta technicznego.')
-    get_object_or_404(MonitoredService, service_user=token_obj.user, owner=invitation.user, is_active=True)
+    get_object_or_404(MonitoredService, service_user=token_obj.user, is_active=True)
 
     user = invitation.user
     username = user.username.lower()
