@@ -4,7 +4,7 @@
 # Architektura: Service Accounts (Konta techniczne DRF + Nadzorca człowiek)
 # ==============================================================================
 from django.db import models
-from django.contrib.auth.models import User, Group
+from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.core.validators import MinValueValidator
@@ -162,7 +162,7 @@ class MonitoredService(models.Model):
         return self.status == 0
 
     def sprawdz_status_i_wyslij_powiadomienie(self):
-        """Wysyła e-mail o zmianie stanu wyłącznie członkom grupy Monitoring."""
+        """Powiadamia członków grupy Monitoring: aplikacja albo e-mail."""
         if self.is_archived:
             return False
         current_status = self._get_monitoring_status()
@@ -170,12 +170,8 @@ class MonitoredService(models.Model):
         if current_status != self.last_status:
             current_status_display = self.STATUS_LABELS.get(current_status, "UNKNOWN")
             
-            recipients = []
-            try:
-                group = Group.objects.get(name="Monitoring")
-                recipients = sorted(set(group.user_set.exclude(email='').values_list('email', flat=True)))
-            except Group.DoesNotExist:
-                logger.warning("Grupa 'Monitoring' nie istnieje w bazie.")
+            from notifications.services import group_notification_recipients
+            recipients, _ = group_notification_recipients('Monitoring')
 
             now = timezone.localtime(timezone.now())
             pelna_tresc = (

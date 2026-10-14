@@ -1,7 +1,7 @@
 from django.db import models
 from django.core.mail import send_mail
 from django.utils import timezone
-from django.contrib.auth.models import User, Group
+from django.contrib.auth.models import User
 import logging
 
 logger = logging.getLogger(__name__)
@@ -63,11 +63,9 @@ class Ocena(models.Model):
     def wyslij_powiadomienie(self):
         if self.powiadomienie_status != self.POWIADOMIENIE_OCZEKUJE or self.archiwizowano_at:
             return False
-        recipients = list(
-            Group.objects.get(name='Librus').user_set
-            .exclude(email='').values_list('email', flat=True).distinct()
-        )
-        if not recipients:
+        from notifications.services import group_notification_recipients
+        recipients, has_push = group_notification_recipients('Librus')
+        if not recipients and not has_push:
             raise RuntimeError('Brak adresatów powiadomień w grupie Librus.')
         subject = f'[{self.dziecko.user.username}] Nowa ocena: {self.przedmiot} — {self.wartosc}'
         body = (
@@ -77,7 +75,7 @@ class Ocena(models.Model):
             f'Data: {self.data:%Y-%m-%d}\n'
             f'Opis: {self.opis or "—"}\n'
         )
-        if send_mail(subject, body, None, recipients, fail_silently=False) != 1:
+        if recipients and send_mail(subject, body, None, recipients, fail_silently=False) != 1:
             raise RuntimeError('Serwer poczty nie potwierdził wysłania powiadomienia.')
         self.powiadomienie_status = self.POWIADOMIENIE_WYSLANE
         self.powiadomiono_at = timezone.now()
@@ -128,10 +126,8 @@ class Wiadomosc(models.Model):
         verbose_name_plural = "Wiadomości"
 
     def wyslij_powiadomienie(self):
-        group = Group.objects.get(name="Librus")
-        recipient_list = group.user_set.values_list('email', flat=True)
-        recipient_list = list(recipient_list)
-        """Przygotowuje treść i wysyła e-mail."""
+        from notifications.services import group_notification_recipients
+        recipient_list, has_push = group_notification_recipients('Librus')
         pelna_tresc = (
             f"LIBRUS WIADOMOŚĆ ({self.dziecko})\n"
             f"Od: {self.nadawca}\n"
@@ -142,14 +138,14 @@ class Wiadomosc(models.Model):
         subject = f"[{self.dziecko.user.username}] Nowa wiadomość: {self.temat} od: {self.nadawca}"
 
         try:
-            # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
+            # Bez odbiorców e-mail wystarcza aktywna rejestracja push.
             success = send_mail(
                 subject,
                 pelna_tresc,
                 None, # Użyje DEFAULT_FROM_EMAIL z ustawień
                 recipient_list,
                 fail_silently=False,
-            )
+            ) if recipient_list else int(has_push)
             
             if success:
                 self.wyslane = True
@@ -181,10 +177,8 @@ class Ogloszenie(models.Model):
         verbose_name_plural = "Ogłoszenia"
         
     def wyslij_powiadomienie(self):
-        group = Group.objects.get(name="Librus")
-        recipient_list = group.user_set.values_list('email', flat=True)
-        recipient_list = list(recipient_list)
-        """Przygotowuje treść i wysyła e-mail."""
+        from notifications.services import group_notification_recipients
+        recipient_list, has_push = group_notification_recipients('Librus')
         pelna_tresc = (
             f"LIBRUS OGŁOSZENIE ({self.dziecko})\n"
             f"Autor ogłoszenia: {self.nadawca}\n"
@@ -195,14 +189,14 @@ class Ogloszenie(models.Model):
         subject = f"[{self.dziecko.user.username}] Nowe ogłoszenie: {self.tytul} od: {self.nadawca}"
 
         try:
-            # send_mail zwraca liczbę wysłanych maili (1 jeśli sukces)
+            # Bez odbiorców e-mail wystarcza aktywna rejestracja push.
             success = send_mail(
                 subject,
                 pelna_tresc,
                 None, # Użyje DEFAULT_FROM_EMAIL z ustawień
                 recipient_list,
                 fail_silently=False,
-            )
+            ) if recipient_list else int(has_push)
             
             if success:
                 self.wyslane = True

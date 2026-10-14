@@ -12,13 +12,34 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 
 
+def group_notification_recipients(group):
+    """Choose push for eligible active installations, email for other group members."""
+    from django.contrib.auth.models import User
+    from mysite.mobile_api import mobile_permissions
+
+    push_users = set()
+    if settings.FCM_ENABLED:
+        devices = PushDevice.objects.filter(
+            is_active=True, user__is_active=True, user__groups__name=group,
+        ).select_related('user').distinct()
+        push_users = {device.user_id for device in devices
+                      if mobile_permissions(device.user).get(group.lower(), False)}
+    emails = list(User.objects.filter(is_active=True, groups__name=group)
+                  .exclude(pk__in=push_users).exclude(email='')
+                  .order_by('email').values_list('email', flat=True).distinct())
+    return emails, bool(push_users)
+
+
 def queue_group_push(*, group, event_key, title, body):
     if not settings.FCM_ENABLED:
         return 0
     try:
+        from mysite.mobile_api import mobile_permissions
         devices = PushDevice.objects.filter(is_active=True, user__is_active=True, user__groups__name=group).select_related('user').distinct()
         delivery_ids = []
         for device in devices.iterator(chunk_size=100):
+            if not mobile_permissions(device.user).get(group.lower(), False):
+                continue
             delivery, created = PushDelivery.objects.get_or_create(
                 device=device, event_key=event_key,
                 defaults={'user': device.user, 'group': group, 'title': title[:120], 'body': body[:255]},

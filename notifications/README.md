@@ -1,11 +1,21 @@
 # Powiadomienia push Firebase
 
-Django wysyła ogólne powiadomienie push po udanym wysłaniu e-maila o ocenie,
-wiadomości, ogłoszeniu Librusa lub zmianie statusu monitorowanej usługi.
-Odbiorcami są aktywne telefony aktywnych użytkowników należących odpowiednio
-do grup `Librus` i `Monitoring`, tak jak odbiorcy maili. Sam superuser bez grupy
-nie jest odbiorcą powiadomień grupowych. Treści wiadomości i dane dzieci nie
-są przekazywane do Firebase. Kliknięcie otwiera właściwy dashboard.
+Django wybiera kanał osobno dla każdego aktywnego użytkownika grupy `Librus`
+lub `Monitoring`: jeśli ma aktywną, zarejestrowaną aplikację i dostęp do danego
+widoku, otrzymuje push bez e-maila. Pozostali otrzymują e-mail. Wybór obejmuje
+nowe oceny, wiadomości, ogłoszenia i zmiany statusu monitorowanej usługi.
+Przy wyłączonym FCM wszyscy odbiorcy korzystają z poczty. Sam superuser bez
+grupy nie jest odbiorcą powiadomień grupowych.
+
+Aktywność oznacza wpis `PushDevice.is_active`, nie potwierdzenie, że telefon
+jest w danej chwili online albo aplikacja jest otwarta. Po wyrejestrowaniu
+telefonu wraca kanał e-mail; przy wielu telefonach wystarczy jeden aktywny.
+Błąd dostarczenia push nie powoduje dodatkowego maila dla tego samego zdarzenia.
+Unieważniony token Firebase dezaktywuje urządzenie, więc następne zdarzenia
+korzystają z poczty, jeśli użytkownik nie ma innego aktywnego telefonu.
+
+Treści wiadomości i dane dzieci nie są przekazywane do Firebase.
+Kliknięcie powiadomienia otwiera właściwy dashboard.
 
 ## Konfiguracja
 
@@ -56,7 +66,7 @@ Zmiana applicationId oznacza osobną instalację względem dawnego
 `pl.mysite.dashboard`; wymaga ponownego logowania.
 
 Nowe powiadomienia są wysyłane po zatwierdzeniu transakcji. Błędy Firebase nie
-cofają udanego e-maila. Próby ponawiane są maksymalnie trzykrotnie, po jednej
+cofają wysyłek e-mail do pozostałych odbiorców. Próby ponawiane są maksymalnie trzykrotnie, po jednej
 oraz dwóch minutach; do obsługi ponowień skonfiguruj cykliczne uruchamianie
 (np. co minutę, w katalogu projektu, interpreterem jego środowiska):
 

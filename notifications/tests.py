@@ -15,7 +15,7 @@ from librus.models import Dziecko, Ocena, Wiadomosc, Ogloszenie
 from monitoring.models import MonitoredService
 from monitoring.services import provision_service_account
 from .models import PushDelivery, PushDevice
-from .services import queue_group_push, deliver_pending, send_fcm
+from .services import queue_group_push, deliver_pending, send_fcm, group_notification_recipients
 
 
 @override_settings(FCM_ENABLED=True, FCM_SEND_IMMEDIATELY=False,
@@ -158,7 +158,7 @@ class PushTests(TestCase):
         self.assertEqual(len(callbacks), 1)
         self.assertEqual(PushDelivery.objects.get().state, 'pending')
 
-    def test_librus_email_success_queues_grade_message_and_announcement(self):
+    def test_librus_active_app_queues_without_email(self):
         child_user = User.objects.create_user('child', first_name='Dziecko')
         child = Dziecko.objects.create(user=child_user, librus_login='fake-login')
         grade = Ocena.objects.create(dziecko=child, librus_id='1', wartosc='5', przedmiot='Matematyka', data=date.today())
@@ -167,7 +167,7 @@ class PushTests(TestCase):
         self.assertTrue(grade.wyslij_powiadomienie())
         self.assertTrue(message.wyslij_powiadomienie())
         self.assertTrue(announcement.wyslij_powiadomienie())
-        self.assertEqual(len(mail.outbox), 3)
+        self.assertEqual(len(mail.outbox), 0)
         self.assertEqual(PushDelivery.objects.count(), 3)
         for delivery in PushDelivery.objects.all():
             self.assertNotIn('Private', delivery.body + delivery.title)
@@ -175,6 +175,8 @@ class PushTests(TestCase):
         self.assertEqual(PushDelivery.objects.count(), 3)
 
     def test_email_failure_does_not_enqueue_push_or_mark_grade_as_sent(self):
+        self.device.is_active = False
+        self.device.save()
         child = Dziecko.objects.create(user=User.objects.create_user('child'), librus_login='fake-login')
         grade = Ocena.objects.create(dziecko=child, librus_id='1', wartosc='5', przedmiot='Matematyka', data=date.today())
         with patch('librus.models.send_mail', side_effect=RuntimeError('fake SMTP error')):
@@ -188,6 +190,39 @@ class PushTests(TestCase):
         service, _ = provision_service_account(owner=self.user, username='svc-test', service_name='backup')
         self.assertTrue(service.sprawdz_status_i_wyslij_powiadomienie())
         self.assertFalse(service.sprawdz_status_i_wyslij_powiadomienie())
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox), 0)
         self.assertEqual(PushDelivery.objects.count(), 1)
         self.assertEqual(PushDelivery.objects.get().group, 'Monitoring')
+
+    def test_mixed_group_gets_email_only_for_users_without_active_app(self):
+        other = User.objects.create_user('email-only', email='email-only@example.com')
+        other.groups.add(self.librus, self.monitoring)
+        child = Dziecko.objects.create(user=User.objects.create_user('child'), librus_login='fake-login')
+        events = [
+            Ocena.objects.create(dziecko=child, librus_id='1', wartosc='5', przedmiot='Matematyka', data=date.today()),
+            Wiadomosc.objects.create(dziecko=child, wiadomosc_id='1', temat='Subject', tresc='Body'),
+            Ogloszenie.objects.create(dziecko=child, ogloszenie_id='1', tytul='Title', tresc='Body'),
+        ]
+        for event in events:
+            self.assertTrue(event.wyslij_powiadomienie())
+        service, _ = provision_service_account(owner=self.user, username='svc-mixed', service_name='backup')
+        self.assertTrue(service.sprawdz_status_i_wyslij_powiadomienie())
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertTrue(all(message.to == [other.email] for message in mail.outbox))
+        self.assertEqual(PushDelivery.objects.count(), 4)
+        self.assertEqual(set(PushDelivery.objects.values_list('user_id', flat=True)), {self.user.pk})
+
+    def test_disabled_fcm_or_inactive_device_restores_email_channel(self):
+        with override_settings(FCM_ENABLED=False):
+            self.assertEqual(group_notification_recipients('Librus'), ([self.user.email], False))
+        self.client.delete(self.url)
+        self.assertEqual(group_notification_recipients('Librus'), ([self.user.email], False))
+
+    def test_app_user_without_email_still_gets_grade_push(self):
+        self.user.email = ''
+        self.user.save()
+        child = Dziecko.objects.create(user=User.objects.create_user('child'), librus_login='fake-login')
+        grade = Ocena.objects.create(dziecko=child, librus_id='1', wartosc='5', przedmiot='Matematyka', data=date.today())
+        self.assertTrue(grade.wyslij_powiadomienie())
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(PushDelivery.objects.count(), 1)
