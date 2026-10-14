@@ -30,3 +30,7 @@ staticfiles/
 
 
 
+
+# Firebase server credentials
+.secrets/
+*firebase-service-account*.json

@@ -178,3 +178,15 @@ LIBRUS_SESSION_DIR = Path(os.getenv('LIBRUS_SESSION_DIR', str(BASE_DIR / '.libru
 # mysite/settings.py
 BACKUP_PI_HOST = '192.168.0.131'  # Stały adres Raspberry Pi
 BACKUP_PI_USER = 'smerf'
+
+FCM_ENABLED = os.getenv('FCM_ENABLED', '0') == '1'
+FCM_SEND_IMMEDIATELY = os.getenv('FCM_SEND_IMMEDIATELY', '1') == '1'
+# Ścieżki względne odnoszą się do projektu, niezależnie od katalogu procesu.
+_firebase_credentials = Path(os.getenv(
+    'FIREBASE_CREDENTIALS_FILE', '.secrets/firebase-service-account.json',
+))
+FIREBASE_CREDENTIALS_FILE = str(
+    _firebase_credentials if _firebase_credentials.is_absolute()
+    else BASE_DIR / _firebase_credentials
+)
+
