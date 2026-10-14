@@ -193,3 +193,9 @@ APK używa applicationId `com.macbilicki.domowydashboard`, zgodnego z konfigurac
 Firebase użytkownika. Dawna aplikacja `pl.mysite.dashboard` pozostaje osobną
 instalacją; w nowej trzeba zalogować się ponownie. Zgoda na powiadomienia
 Androida jest wymagana. Kliknięcie powiadomienia otwiera odpowiednią zakładkę.
+
+## Aktualizacja z własnego serwera
+
+Aplikacja sprawdza dostępność nowej wersji po zalogowaniu. Pobranie i systemowa
+instalacja wymagają kliknięcia. Przygotowanie APK i publikację katalogu na
+hostingu opisuje [instrukcja aktualizacji](UPDATES.md).

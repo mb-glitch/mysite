@@ -17,11 +17,15 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from .mobile_updates import AppUpdateView, AppApkView
+
 from .mobile_api import (
     BackupDashboardView, LibrusDashboardView, MobileLoginView, MobileProfileView, MonitoringDashboardView,
 )
 
 urlpatterns = [
+    path('api/v1/app/update/', AppUpdateView.as_view(), name='api-v1-app-update'),
+    path('api/v1/app/apk/<str:filename>/', AppApkView.as_view(), name='api-v1-app-apk'),
     path('api/v1/push/devices/<uuid:device_id>/', include('notifications.device_urls')),
     path('api/v1/auth/login/', MobileLoginView.as_view(), name='api-v1-mobile-login'),
     path('api/v1/auth/me/', MobileProfileView.as_view(), name='api-v1-mobile-profile'),

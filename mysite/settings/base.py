@@ -190,3 +190,6 @@ FIREBASE_CREDENTIALS_FILE = str(
     _firebase_credentials if _firebase_credentials.is_absolute()
     else BASE_DIR / _firebase_credentials
 )
+
+# Ręcznie publikowane APK i release.json, wspólny katalog lokalnie i na serwerze.
+ANDROID_RELEASE_DIR = BASE_DIR / 'android_releases'

@@ -13,6 +13,8 @@ object DashboardApi {
             uri.rawQuery == null && uri.rawFragment == null) { "Podaj adres HTTPS serwera bez loginu, parametrów i fragmentu." }
         return uri.toASCIIString().trimEnd('/')
     }
+    fun update(config: Connection): JSONObject = request(config.baseUrl, "app/update", config.token)
+
     fun profile(config: Connection): JSONObject = request(config.baseUrl, "auth/me", config.token)
 
     fun login(baseUrl: String, username: String, password: String): Connection {

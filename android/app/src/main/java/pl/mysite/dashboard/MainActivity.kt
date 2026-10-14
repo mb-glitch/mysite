@@ -33,6 +33,10 @@ class MainActivity : ComponentActivity() {
     private var connection: Connection? = null
     private var selectedDashboard = Dashboard.LIBRUS
     private var access: DashboardAccess? = null
+    private lateinit var appUpdater: AppUpdater
+    private val installPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        appUpdater.permissionResult()
+    }
     private var pushStarted = false
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) configurePush()
@@ -91,6 +95,12 @@ class MainActivity : ComponentActivity() {
         refreshButton = button(actions, "Odśwież") { refresh() }
         logoutButton = button(actions, "Wyloguj") { confirmLogout() }
         root.addView(actions)
+        val updateArea = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(updateArea)
+        appUpdater = AppUpdater(this, updateArea, { connection }) {
+            installPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                android.net.Uri.parse("package:$packageName")))
+        }
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
@@ -132,6 +142,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         generation++
         worker.shutdownNow()
+        appUpdater.close()
         super.onDestroy()
     }
     private fun text(parent: LinearLayout, value: String, size: Int = 16, bold: Boolean = false): TextView {
@@ -204,6 +215,7 @@ class MainActivity : ComponentActivity() {
                     if (selected != null) selectedDashboard = selected
                     updateControls()
                     configurePush()
+                    if (permissions.librus || permissions.monitoring) appUpdater.check(config)
                     if (selected == null || dashboardResult == null) {
                         text(card("Brak dostępnych widoków"), "Poproś administratora o dodanie konta do grupy Librus lub Monitoring.")
                     } else dashboardResult.fold(onSuccess = { data ->
@@ -269,6 +281,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun clearSession() {
+        appUpdater.reset()
         PushClient.logout(this, connection) { store.clear() }
         pushStarted = false
         generation++
@@ -349,7 +362,7 @@ class MainActivity : ComponentActivity() {
                 val expanded = body.visibility == View.GONE
                 body.visibility = if (expanded) View.VISIBLE else View.GONE
                 title.text = "${if (expanded) "▾" else "▸"} $subjects"
-                tile.setBackgroundColor(if (expanded) Color.rgb(246, 222, 209) else Color.TRANSPARENT)
+                tile.setBackgroundColor(if (expanded) Color.rgb(236, 212, 199) else Color.TRANSPARENT)
                 tile.contentDescription = "$names. $kinds. $metadata. $subjects. " +
                     if (expanded) "${body.text}. Dotknij, aby zwinąć treść" else "Dotknij, aby rozwinąć treść"
             }
